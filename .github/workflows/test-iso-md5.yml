@@ -1,4 +1,4 @@
-name: Test ISO creation and isomd5 verification
+name: Test ISO tools
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-test-iso:
+  test-iso-tools:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,33 +17,33 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            git \
-            xorriso \
-            curl \
-            pkg-config \
-            libssl-dev
+          sudo apt-get install -y xorriso file
+
+      - name: Make bundled tools executable
+        run: |
+          chmod +x tools/checkisomd5
+          chmod +x tools/implantisomd5
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build project
-        run: cargo build --release
+        run: cargo build --release --bins
 
-      - name: Build isomd5sum tools from upstream
+      - name: Verify built binaries exist
         run: |
-          git clone --depth 1 https://github.com/rhinstaller/isomd5sum.git /tmp/isomd5sum
-          make -C /tmp/isomd5sum implantisomd5 checkisomd5
+          ls -la target/release
+          test -x target/release/blake3iso
+          test -x target/release/ISOB3GUI
 
       - name: Create test ISO contents
         run: |
           rm -rf test-iso-root out
           mkdir -p test-iso-root out
           echo "hello from github actions" > test-iso-root/README.txt
-          echo "build sha: $GITHUB_SHA" > test-iso-root/BUILD.txt
+          echo "commit: $GITHUB_SHA" > test-iso-root/BUILD.txt
 
-      - name: Create test ISO
+      - name: Create base ISO
         run: |
           xorriso -as mkisofs \
             -r \
@@ -52,48 +52,105 @@ jobs:
             -o out/test.iso \
             test-iso-root
 
+      - name: Show base ISO info
+        run: |
+          ls -lh out/test.iso
+          file out/test.iso | tee out/file-base.txt
+
+      #
+      # isomd5sum path
+      #
+      - name: Copy ISO for isomd5 test
+        run: cp out/test.iso out/test-md5.iso
+
       - name: Implant MD5 into ISO
         run: |
-          /tmp/isomd5sum/implantisomd5 out/test.iso
+          tools/implantisomd5 out/test-md5.iso | tee out/implantisomd5.txt
 
-      - name: Verify implanted MD5 with checkisomd5
+      - name: Verify implanted MD5
         run: |
-          /tmp/isomd5sum/checkisomd5 --verbose out/test.iso | tee out/checkisomd5.txt
+          tools/checkisomd5 -v out/test-md5.iso | tee out/checkisomd5.txt
 
-      - name: Run your GUI/CLI verifier if present
+      - name: Corrupt md5 ISO and confirm failure
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ -x target/release/ISOB3GUI ]; then
-            echo "Found ISOB3GUI binary."
-            file target/release/ISOB3GUI | tee out/isob3gui-file.txt
-          fi
-
-          if [ -x target/release/blake3verifier ]; then
-            echo "Running blake3verifier against test ISO"
-            target/release/blake3verifier out/test.iso | tee out/blake3verifier.txt
-          else
-            echo "No CLI verifier binary found; skipping app verification step." | tee out/blake3verifier.txt
-          fi
-
-      - name: Corrupt ISO and confirm checkisomd5 fails
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp out/test.iso out/test-corrupt.iso
-          printf 'X' | dd of=out/test-corrupt.iso bs=1 seek=32768 count=1 conv=notrunc
-          if /tmp/isomd5sum/checkisomd5 --verbose out/test-corrupt.iso > out/checkisomd5-corrupt.txt 2>&1; then
-            echo "Expected corrupted ISO verification to fail, but it passed."
+          cp out/test-md5.iso out/test-md5-corrupt.iso
+          printf 'X' | dd of=out/test-md5-corrupt.iso bs=1 seek=32768 count=1 conv=notrunc
+          if tools/checkisomd5 -v out/test-md5-corrupt.iso > out/checkisomd5-corrupt.txt 2>&1; then
+            echo "Expected corrupted MD5 ISO verification to fail, but it passed."
             cat out/checkisomd5-corrupt.txt
             exit 1
           else
-            echo "Corrupted ISO correctly failed verification."
+            echo "Corrupted MD5 ISO correctly failed verification."
             cat out/checkisomd5-corrupt.txt
           fi
 
-      - name: Upload ISO test artifacts
+      #
+      # blake3iso path
+      #
+      - name: Copy ISO for blake3 test
+        run: cp out/test.iso out/test-blake3.iso
+
+      - name: Check ISO before implant
+        shell: bash
+        run: |
+          set -euo pipefail
+          if target/release/blake3iso check out/test-blake3.iso > out/blake3-check-before.txt 2>&1; then
+            echo "Expected check before implant to fail, but it passed."
+            cat out/blake3-check-before.txt
+            exit 1
+          else
+            echo "Check before implant correctly failed."
+            cat out/blake3-check-before.txt
+          fi
+
+      - name: Implant BLAKE3 trailer
+        run: |
+          target/release/blake3iso implant out/test-blake3.iso | tee out/blake3-implant.txt
+
+      - name: Show BLAKE3 trailer info
+        run: |
+          target/release/blake3iso info out/test-blake3.iso | tee out/blake3-info.txt
+
+      - name: Check implanted BLAKE3 trailer
+        run: |
+          target/release/blake3iso check out/test-blake3.iso | tee out/blake3-check.txt
+
+      - name: Corrupt BLAKE3 ISO and confirm failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp out/test-blake3.iso out/test-blake3-corrupt.iso
+          printf 'Y' | dd of=out/test-blake3-corrupt.iso bs=1 seek=32768 count=1 conv=notrunc
+          if target/release/blake3iso check out/test-blake3-corrupt.iso > out/blake3-check-corrupt.txt 2>&1; then
+            echo "Expected corrupted BLAKE3 ISO verification to fail, but it passed."
+            cat out/blake3-check-corrupt.txt
+            exit 1
+          else
+            echo "Corrupted BLAKE3 ISO correctly failed verification."
+            cat out/blake3-check-corrupt.txt
+          fi
+
+      - name: Remove BLAKE3 trailer
+        run: |
+          target/release/blake3iso remove out/test-blake3.iso | tee out/blake3-remove.txt
+
+      - name: Check ISO after trailer removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          if target/release/blake3iso check out/test-blake3.iso > out/blake3-check-after-remove.txt 2>&1; then
+            echo "Expected check after removal to fail, but it passed."
+            cat out/blake3-check-after-remove.txt
+            exit 1
+          else
+            echo "Check after removal correctly failed."
+            cat out/blake3-check-after-remove.txt
+          fi
+
+      - name: Upload test artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: iso-md5-test-artifacts
+          name: iso-tool-test-artifacts
           path: out/
