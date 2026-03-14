@@ -1,4 +1,6 @@
-use std::path::{PathBuf};
+use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::process::Command;
 
 #[cfg(target_os = "linux")]
 use serde::Deserialize;
