@@ -1,0 +1,99 @@
+name: Test ISO creation and isomd5 verification
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test-iso:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            xorriso \
+            curl \
+            pkg-config \
+            libssl-dev
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build project
+        run: cargo build --release
+
+      - name: Build isomd5sum tools from upstream
+        run: |
+          git clone --depth 1 https://github.com/rhinstaller/isomd5sum.git /tmp/isomd5sum
+          make -C /tmp/isomd5sum implantisomd5 checkisomd5
+
+      - name: Create test ISO contents
+        run: |
+          rm -rf test-iso-root out
+          mkdir -p test-iso-root out
+          echo "hello from github actions" > test-iso-root/README.txt
+          echo "build sha: $GITHUB_SHA" > test-iso-root/BUILD.txt
+
+      - name: Create test ISO
+        run: |
+          xorriso -as mkisofs \
+            -r \
+            -J \
+            -V TEST_ISO \
+            -o out/test.iso \
+            test-iso-root
+
+      - name: Implant MD5 into ISO
+        run: |
+          /tmp/isomd5sum/implantisomd5 out/test.iso
+
+      - name: Verify implanted MD5 with checkisomd5
+        run: |
+          /tmp/isomd5sum/checkisomd5 --verbose out/test.iso | tee out/checkisomd5.txt
+
+      - name: Run your GUI/CLI verifier if present
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -x target/release/ISOB3GUI ]; then
+            echo "Found ISOB3GUI binary."
+            file target/release/ISOB3GUI | tee out/isob3gui-file.txt
+          fi
+
+          if [ -x target/release/blake3verifier ]; then
+            echo "Running blake3verifier against test ISO"
+            target/release/blake3verifier out/test.iso | tee out/blake3verifier.txt
+          else
+            echo "No CLI verifier binary found; skipping app verification step." | tee out/blake3verifier.txt
+          fi
+
+      - name: Corrupt ISO and confirm checkisomd5 fails
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp out/test.iso out/test-corrupt.iso
+          printf 'X' | dd of=out/test-corrupt.iso bs=1 seek=32768 count=1 conv=notrunc
+          if /tmp/isomd5sum/checkisomd5 --verbose out/test-corrupt.iso > out/checkisomd5-corrupt.txt 2>&1; then
+            echo "Expected corrupted ISO verification to fail, but it passed."
+            cat out/checkisomd5-corrupt.txt
+            exit 1
+          else
+            echo "Corrupted ISO correctly failed verification."
+            cat out/checkisomd5-corrupt.txt
+          fi
+
+      - name: Upload ISO test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: iso-md5-test-artifacts
+          path: out/
