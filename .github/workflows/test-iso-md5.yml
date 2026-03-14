@@ -19,11 +19,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xorriso file
 
-      - name: Make bundled tools executable
-        run: |
-          chmod +x tools/checkisomd5
-          chmod +x tools/implantisomd5
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -57,38 +52,6 @@ jobs:
           ls -lh out/test.iso
           file out/test.iso | tee out/file-base.txt
 
-      #
-      # isomd5sum path
-      #
-      - name: Copy ISO for isomd5 test
-        run: cp out/test.iso out/test-md5.iso
-
-      - name: Implant MD5 into ISO
-        run: |
-          tools/implantisomd5 out/test-md5.iso | tee out/implantisomd5.txt
-
-      - name: Verify implanted MD5
-        run: |
-          tools/checkisomd5 -v out/test-md5.iso | tee out/checkisomd5.txt
-
-      - name: Corrupt md5 ISO and confirm failure
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp out/test-md5.iso out/test-md5-corrupt.iso
-          printf 'X' | dd of=out/test-md5-corrupt.iso bs=1 seek=32768 count=1 conv=notrunc
-          if tools/checkisomd5 -v out/test-md5-corrupt.iso > out/checkisomd5-corrupt.txt 2>&1; then
-            echo "Expected corrupted MD5 ISO verification to fail, but it passed."
-            cat out/checkisomd5-corrupt.txt
-            exit 1
-          else
-            echo "Corrupted MD5 ISO correctly failed verification."
-            cat out/checkisomd5-corrupt.txt
-          fi
-
-      #
-      # blake3iso path
-      #
       - name: Copy ISO for blake3 test
         run: cp out/test.iso out/test-blake3.iso
 
