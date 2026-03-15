@@ -1,6 +1,6 @@
 [package]
 name = "ISOB3TOOLS"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 default-run = "ISOB3GUI"
 
