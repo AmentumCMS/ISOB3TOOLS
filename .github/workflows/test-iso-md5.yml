@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   test-iso-tools:
     runs-on: ubuntu-latest
@@ -17,24 +20,39 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y xorriso file
+          sudo apt-get install -y \
+            xorriso \
+            file \
+            zip \
+            mingw-w64
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
 
-      - name: Build project
+      - name: Build Linux binaries
         run: cargo build --release --bins
 
-      - name: Verify built binaries exist
+      - name: Verify Linux binaries exist
         run: |
           ls -la target/release
           test -x target/release/blake3iso
           test -x target/release/ISOB3GUI
 
+      - name: Build Windows binaries
+        run: cargo build --release --bins --target x86_64-pc-windows-gnu
+
+      - name: Verify Windows binaries exist
+        run: |
+          ls -la target/x86_64-pc-windows-gnu/release
+          test -f target/x86_64-pc-windows-gnu/release/blake3iso.exe
+          test -f target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe
+
       - name: Create test ISO contents
         run: |
-          rm -rf test-iso-root out
-          mkdir -p test-iso-root out
+          rm -rf test-iso-root out dist
+          mkdir -p test-iso-root out dist
           echo "hello from github actions" > test-iso-root/README.txt
           echo "commit: $GITHUB_SHA" > test-iso-root/BUILD.txt
 
@@ -112,8 +130,47 @@ jobs:
             cat out/blake3-check-after-remove.txt
           fi
 
+      - name: Package Linux binaries
+        run: |
+          mkdir -p dist/linux
+          cp target/release/blake3iso dist/linux/
+          cp target/release/ISOB3GUI dist/linux/
+          cp README.md dist/linux/ || true
+          tar -czf dist/ISOB3TOOLS-linux-x86_64.tar.gz -C dist/linux .
+
+      - name: Package Windows binaries
+        run: |
+          mkdir -p dist/windows
+          cp target/x86_64-pc-windows-gnu/release/blake3iso.exe dist/windows/
+          cp target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe dist/windows/
+          cp README.md dist/windows/ || true
+          (
+            cd dist/windows
+            zip -r ../ISOB3TOOLS-windows-x86_64.zip .
+          )
+
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
         with:
           name: iso-tool-test-artifacts
-          path: out/
+          path: |
+            out/
+            dist/
+
+      - name: Generate release tag
+        if: github.event_name != 'pull_request'
+        id: tag
+        run: |
+          echo "tag=build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ISOB3TOOLS ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+          prerelease: true
+          files: |
+            dist/ISOB3TOOLS-linux-x86_64.tar.gz
+            dist/ISOB3TOOLS-windows-x86_64.zip
