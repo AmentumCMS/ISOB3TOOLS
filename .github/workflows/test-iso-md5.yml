@@ -55,15 +55,34 @@ jobs:
           test -f target/x86_64-pc-windows-gnu/release/blake3iso.exe
           test -f target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe
 
-      - name: Collect binaries
+      - name: Collect binaries + create ISO
         run: |
           set -euo pipefail
-          rm -rf artifacts
-          mkdir -p artifacts
+          
+          rm -rf artifacts iso-root
+          mkdir -p artifacts iso-root
+          
+          # Copy binaries to artifacts (flat)
           cp target/release/blake3iso artifacts/
           cp target/release/ISOB3GUI artifacts/
           cp target/x86_64-pc-windows-gnu/release/blake3iso.exe artifacts/
           cp target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe artifacts/
+          cp README.md artifacts/ || true
+          
+          # Prepare ISO contents (separate temp dir)
+          cp artifacts/blake3iso iso-root/
+          cp artifacts/ISOB3GUI iso-root/
+          cp artifacts/blake3iso.exe iso-root/
+          cp artifacts/ISOB3GUI.exe iso-root/
+          cp artifacts/README.md iso-root/ || true
+          
+          # Create ISO
+          xorriso -as mkisofs \
+            -r \
+            -J \
+            -V ISOB3TOOLS \
+            -o artifacts/ISOB3TOOLS-binaries.iso \
+            iso-root
 
       - name: Upload built binaries
         uses: actions/upload-artifact@v4
