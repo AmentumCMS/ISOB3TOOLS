@@ -8,7 +8,9 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone)]
 pub enum MediaKind {
+    /// Read directly from a device node or raw optical drive handle.
     RawDevice,
+    /// Walk a mounted filesystem and look for `.iso` files.
     ScanRoot,
 }
 
@@ -37,6 +39,7 @@ fn drive_letter_to_cdrom_device(letter: char) -> Option<String> {
     let first_nul = buf.iter().position(|&c| c == 0)?;
     let target = String::from_utf16_lossy(&buf[..first_nul]);
 
+    // Translate the DOS device mapping into a raw `\\.\CdRomN` path when possible.
     let lower = target.to_ascii_lowercase();
     if let Some(idx) = lower.find(r"\device\cdrom") {
         let suffix = &target[idx + r"\Device\".len()..];
@@ -68,6 +71,8 @@ fn get_windows_media_roots() -> Vec<MediaRoot> {
         const DRIVE_CDROM: u32 = 5;
 
         if drive_type == DRIVE_CDROM {
+            // Prefer raw device access for optical media so verification works even when the
+            // mounted filesystem view is incomplete or absent.
             if let Some(cdrom_path) = drive_letter_to_cdrom_device(letter as char) {
                 roots.push(MediaRoot {
                     path: PathBuf::from(cdrom_path),
@@ -115,6 +120,7 @@ struct LsblkDevice {
 fn get_linux_media_roots() -> Vec<MediaRoot> {
     let mut roots = Vec::new();
 
+    // `lsblk` gives us enough information to separate optical devices from removable USB mounts.
     let lsblk_result = Command::new("lsblk")
         .args(["-J", "-o", "PATH,TYPE,RM,TRAN,MOUNTPOINT"])
         .output();
@@ -142,6 +148,8 @@ fn get_linux_media_roots() -> Vec<MediaRoot> {
                             });
                         }
                     } else if is_usb {
+                        // For removable storage we scan the mounted tree for ISO files instead of
+                        // hashing the block device directly.
                         if let Some(mp) = mountpoint {
                             roots.push(MediaRoot {
                                 path: PathBuf::from(mp),
@@ -164,6 +172,7 @@ fn get_linux_media_roots() -> Vec<MediaRoot> {
             }
         }
         _ => {
+            // Fall back to a few common optical device names when `lsblk` is unavailable.
             for candidate in ["/dev/sr0", "/dev/sr1", "/dev/sr2", "/dev/cdrom", "/dev/dvd"] {
                 let path = PathBuf::from(candidate);
                 if path.exists() {
@@ -193,6 +202,7 @@ fn dedup_media_roots(roots: Vec<MediaRoot>) -> Vec<MediaRoot> {
             .to_string_lossy()
             .to_string();
 
+        // Keep raw-device and scan-root entries distinct even if they resolve to the same path.
         if seen.insert((key, matches!(root.kind, MediaKind::RawDevice))) {
             out.push(root);
         }

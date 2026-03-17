@@ -69,6 +69,7 @@ fn is_probably_iso(path: &Path) -> Result<(), String> {
     let mut pvd = [0u8; 7];
     read_exact_at(path, PVD_OFFSET, &mut pvd)?;
 
+    // The primary volume descriptor is the cheapest reliable ISO9660 sanity check.
     if pvd[0] != 1 || &pvd[1..6] != b"CD001" || pvd[6] != 1 {
         return Err("not a recognizable ISO9660 primary volume descriptor".to_string());
     }
@@ -104,6 +105,7 @@ fn compute_blake3_normalized(path: &Path, chunk_size: usize) -> Result<[u8; 32],
     let mut buf = vec![0u8; chunk_size];
     let mut offset = 0u64;
 
+    // Hash as if the application-use area were blank so implant/check/remove all agree.
     let app_start = APPDATA_OFFSET;
     let app_end = APPDATA_OFFSET + APPDATA_SIZE as u64;
 
@@ -146,6 +148,7 @@ fn hex(bytes: &[u8]) -> String {
 fn read_metadata(path: &Path) -> Result<Option<[u8; 32]>, String> {
     let buf = read_appdata(path)?;
 
+    // Treat unknown versions or layouts as "missing" instead of a hard failure.
     if &buf[0..8] != MAGIC {
         return Ok(None);
     }
@@ -207,6 +210,7 @@ pub fn implant_iso(path: &Path, force: bool) -> Result<String, String> {
         return Err("appdata not blank; use --force".into());
     }
 
+    // Blank the metadata window before hashing so the stored digest does not include itself.
     let blank = [APPDATA_FILL; APPDATA_SIZE];
     write_appdata(path, &blank)?;
 
@@ -278,6 +282,7 @@ pub fn info_iso(path: &Path) -> Result<String, String> {
 
 fn read_exact_at(path: &Path, offset: u64, buf: &mut [u8]) -> Result<(), String> {
     if is_windows_raw_device(path) {
+        // Windows raw optical devices require sector-aligned reads.
         return read_exact_at_raw(path, offset, buf);
     }
 
@@ -299,6 +304,7 @@ fn read_exact_at_raw(path: &Path, offset: u64, out: &mut [u8]) -> Result<(), Str
     let sector_count = (end_sector - start_sector + 1) as usize;
     let aligned = start_sector * ISO_SECTOR_SIZE;
 
+    // Read the minimal aligned sector range, then slice out the requested bytes.
     let mut buf = vec![0u8; sector_count * sector_size];
     f.seek(SeekFrom::Start(aligned))
         .map_err(|e| format!("seek failed: {e}"))?;

@@ -13,6 +13,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn extract_md5_hex(text: &str) -> Option<String> {
+    // `checkisomd5` output is mostly human-readable, so we scrape the digest from the last field.
     for line in text.lines() {
         if let Some((_, rhs)) = line.rsplit_once(':') {
             let candidate = rhs.trim();
@@ -50,6 +51,7 @@ fn materialize_embedded_checkisomd5() -> Result<PathBuf, String> {
 
     path.push(file_name);
 
+    // Ship the checker as an embedded asset to avoid an external runtime dependency.
     fs::write(&path, CHECKISOMD5_BYTES)
         .map_err(|e| format!("failed to write embedded checker to {}: {e}", path.display()))?;
 
@@ -86,6 +88,7 @@ pub fn has_isomd5sum_implant(path: &Path) -> Result<bool, String> {
         return Ok(false);
     }
 
+    // The legacy implant stores recognizable ASCII markers in the PVD/application area.
     let text = String::from_utf8_lossy(&pvd).to_ascii_uppercase();
 
     Ok(
@@ -129,6 +132,7 @@ pub fn verify_isomd5sum(path: &Path) -> Result<IsoMd5CheckOutcome, String> {
         )
     })?;
 
+    // Normalize stdout/stderr because the bundled tool varies by platform and build.
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 

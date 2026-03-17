@@ -31,10 +31,12 @@ pub enum WorkerEvent {
 #[derive(Debug, Clone)]
 enum WorkerJob {
     Verify { media: MediaRoot, file: PathBuf },
+    /// Report removable media that was discovered but contained no ISO payloads.
     NoIsoFound { media: MediaRoot },
 }
 
 fn find_iso_files(root: &Path) -> Vec<PathBuf> {
+    // Scan only by extension; deeper validation happens in the verifier.
     WalkDir::new(root)
         .into_iter()
         .filter_map(Result::ok)
@@ -53,6 +55,7 @@ fn find_iso_files(root: &Path) -> Vec<PathBuf> {
 fn verify_one_target(media: &MediaRoot, file: &Path) -> WorkerEvent {
     let start = Instant::now();
 
+    // Prefer ISOB3, then fall back to legacy ISOMD5 when no ISOB3 metadata exists.
     let result = match check_iso(file) {
         Ok(CheckOutcome::Valid { detail, .. }) => (true, true, detail),
         Ok(CheckOutcome::Invalid { detail, .. }) => (false, true, detail),
@@ -110,6 +113,7 @@ pub fn scan_worker(tx: Sender<WorkerEvent>, max_workers: usize) -> Result<(), St
 
     let mut jobs = Vec::new();
 
+    // Build the full job list up front so the UI can show accurate progress immediately.
     for m in &media {
         match m.kind {
             MediaKind::RawDevice => jobs.push(WorkerJob::Verify {
@@ -147,6 +151,7 @@ pub fn scan_worker(tx: Sender<WorkerEvent>, max_workers: usize) -> Result<(), St
         let tx_clone = tx.clone();
 
         thread::spawn(move || {
+            // Each worker is intentionally simple: pull one job, emit one event.
             while let Ok(job) = rx.recv() {
                 let _ = tx_clone.send(run_job(job));
             }

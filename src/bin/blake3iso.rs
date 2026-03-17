@@ -7,6 +7,7 @@ use isob3_tools::blake3iso_core::{
 };
 
 #[derive(Parser)]
+/// Minimal CLI wrapper around the ISOB3 core operations.
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -23,6 +24,7 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
+    // Exit codes mirror the verification result so the tool is script-friendly.
     let code = match cli.command {
         Commands::Implant { file, force } => match implant_iso(&file, force) {
             Ok(msg) => { println!("{msg}"); 0 }

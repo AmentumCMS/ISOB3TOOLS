@@ -57,6 +57,7 @@ impl App {
     }
 
     fn reset_results(&mut self) {
+        // Preserve configuration, but clear all per-scan state before launching work.
         self.total = 0;
         self.done = 0;
         self.valid = 0;
@@ -164,6 +165,7 @@ impl App {
                         self.invalid += 1;
                     }
 
+                    // Collapse detailed verifier output into a short status label for the grid.
                     let status = if ok {
                         if detail.starts_with("ISOMD5 valid") {
                             "VALID-ISOMD5".to_string()
@@ -357,6 +359,7 @@ impl eframe::App for App {
                 });
         }
 
+        // Keep the UI responsive while background workers stream results back in.
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
 }
