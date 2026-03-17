@@ -12,6 +12,25 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+fn read_pvd_text(path: &Path) -> Result<Option<String>, String> {
+    const SECTOR_SIZE: u64 = 2048;
+    const PVD_SECTOR: u64 = 16;
+
+    let mut f = File::open(path).map_err(|e| format!("open failed: {e}"))?;
+    f.seek(SeekFrom::Start(PVD_SECTOR * SECTOR_SIZE))
+        .map_err(|e| format!("seek failed: {e}"))?;
+
+    let mut pvd = [0u8; 2048];
+    f.read_exact(&mut pvd)
+        .map_err(|e| format!("read failed: {e}"))?;
+
+    if pvd[0] != 1 || &pvd[1..6] != b"CD001" {
+        return Ok(None);
+    }
+
+    Ok(Some(String::from_utf8_lossy(&pvd).into_owned()))
+}
+
 fn extract_md5_hex(text: &str) -> Option<String> {
     // `checkisomd5` output is mostly human-readable, so we scrape the digest from the last field.
     for line in text.lines() {
@@ -24,6 +43,20 @@ fn extract_md5_hex(text: &str) -> Option<String> {
     }
 
     None
+}
+
+#[allow(dead_code)]
+fn extract_isomd5_from_pvd(text: &str) -> Option<String> {
+    let upper = text.to_ascii_uppercase();
+    let needle = "ISO MD5SUM = ";
+    let start = upper.find(needle)? + needle.len();
+    let candidate = text.get(start..start + 32)?;
+
+    if candidate.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(candidate.to_ascii_lowercase())
+    } else {
+        None
+    }
 }
 
 #[cfg(windows)]
@@ -73,23 +106,12 @@ fn materialize_embedded_checkisomd5() -> Result<PathBuf, String> {
 }
 
 pub fn has_isomd5sum_implant(path: &Path) -> Result<bool, String> {
-    const SECTOR_SIZE: u64 = 2048;
-    const PVD_SECTOR: u64 = 16;
-
-    let mut f = File::open(path).map_err(|e| format!("open failed: {e}"))?;
-    f.seek(SeekFrom::Start(PVD_SECTOR * SECTOR_SIZE))
-        .map_err(|e| format!("seek failed: {e}"))?;
-
-    let mut pvd = [0u8; 2048];
-    f.read_exact(&mut pvd)
-        .map_err(|e| format!("read failed: {e}"))?;
-
-    if pvd[0] != 1 || &pvd[1..6] != b"CD001" {
+    let Some(text) = read_pvd_text(path)? else {
         return Ok(false);
-    }
+    };
 
     // The legacy implant stores recognizable ASCII markers in the PVD/application area.
-    let text = String::from_utf8_lossy(&pvd).to_ascii_uppercase();
+    let text = text.to_ascii_uppercase();
 
     Ok(
         text.contains("ISO MD5SUM = ")
@@ -98,6 +120,22 @@ pub fn has_isomd5sum_implant(path: &Path) -> Result<bool, String> {
             || text.contains("SKIPSECTORS = ")
             || text.contains("RHLISOSTATUS="),
     )
+}
+
+#[allow(dead_code)]
+pub fn info_isomd5sum(path: &Path) -> Result<Option<String>, String> {
+    let Some(text) = read_pvd_text(path)? else {
+        return Ok(None);
+    };
+
+    if !has_isomd5sum_implant(path)? {
+        return Ok(None);
+    }
+
+    let digest = extract_isomd5_from_pvd(&text).unwrap_or_else(|| "unknown".to_string());
+    Ok(Some(format!(
+        "Legacy ISOMD5 metadata found\nAlgorithm: MD5\nDigest: {digest}"
+    )))
 }
 
 #[derive(Debug, Clone)]
