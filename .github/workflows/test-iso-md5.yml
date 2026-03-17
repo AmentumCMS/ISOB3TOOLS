@@ -55,15 +55,21 @@ jobs:
           test -f target/x86_64-pc-windows-gnu/release/blake3iso.exe
           test -f target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe
 
+      - name: Collect binaries
+        run: |
+          set -euo pipefail
+          rm -rf artifacts
+          mkdir -p artifacts
+          cp target/release/blake3iso artifacts/
+          cp target/release/ISOB3GUI artifacts/
+          cp target/x86_64-pc-windows-gnu/release/blake3iso.exe artifacts/
+          cp target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe artifacts/
+
       - name: Upload built binaries
         uses: actions/upload-artifact@v4
         with:
           name: built-binaries
-          path: |
-            target/release/blake3iso
-            target/release/ISOB3GUI
-            target/x86_64-pc-windows-gnu/release/blake3iso.exe
-            target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe
+          path: artifacts/*
 
       - name: Generate release tag
         if: github.event_name != 'pull_request'
@@ -220,6 +226,10 @@ jobs:
         with:
           name: built-binaries
           path: downloaded
+
+      - name: List downloaded artifacts
+        run: |
+          ls -R downloaded
 
       - name: Prepare package directories
         run: |
