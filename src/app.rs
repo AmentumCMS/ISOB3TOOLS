@@ -1,13 +1,10 @@
-use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use eframe::egui;
 
-use crate::trailer::embed_isob3_trailer;
 use crate::worker::{scan_worker, WorkerEvent};
 
-/// One row in the on-screen results table.
 #[derive(Clone)]
 struct ResultRow {
     media: String,
@@ -18,14 +15,6 @@ struct ResultRow {
     ok: bool,
 }
 
-/// Main GUI application state.
-///
-/// This owns:
-/// - the worker communication channel
-/// - scan/progress counters
-/// - the results grid data
-/// - the log output
-/// - the "embed missing trailers" prompt state
 pub struct App {
     tx: Sender<WorkerEvent>,
     rx: Receiver<WorkerEvent>,
@@ -43,13 +32,10 @@ pub struct App {
     results: Vec<ResultRow>,
     logs: Vec<String>,
 
-    missing_trailer_files: Vec<PathBuf>,
-    show_embed_prompt: bool,
-    embedding_now: bool,
+    show_about: bool,
 }
 
 impl App {
-    /// Create a new application instance and its worker event channel.
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
 
@@ -66,13 +52,10 @@ impl App {
             embedded_count: 0,
             results: Vec::new(),
             logs: vec!["Ready.".to_string()],
-            missing_trailer_files: Vec::new(),
-            show_embed_prompt: false,
-            embedding_now: false,
+            show_about: false,
         }
     }
 
-    /// Clear all scan-related state before starting a new scan.
     fn reset_results(&mut self) {
         self.total = 0;
         self.done = 0;
@@ -80,29 +63,37 @@ impl App {
         self.invalid = 0;
         self.embedded_count = 0;
         self.effective_workers = 0;
-        self.missing_trailer_files.clear();
-        self.show_embed_prompt = false;
-        self.embedding_now = false;
         self.results.clear();
         self.logs.clear();
-        self.logs.push("Scanning...".to_string());
+        self.logs.push("Scanning media devices...".to_string());
     }
 
-    /// Append a line to the log panel.
     fn log_line(&mut self, text: impl Into<String>) {
         self.logs.push(text.into());
     }
 
-    /// Human-readable summary shown in the top status bar.
+    fn active_workers(&self) -> usize {
+        if !self.scanning || self.total == 0 {
+            0
+        } else {
+            let remaining = self.total.saturating_sub(self.done);
+            remaining.min(self.effective_workers)
+        }
+    }
+
     fn summary_text(&self) -> String {
         if self.scanning && self.total == 0 {
-            "Scanning...".to_string()
+            "Scanning media devices...".to_string()
         } else if self.total == 0 {
-            "No ISO files found.".to_string()
+            "No media devices found.".to_string()
         } else if self.scanning {
             format!(
                 "Checked {}/{} | Valid: {} | Invalid: {} | Active workers: {}",
-                self.done, self.total, self.valid, self.invalid, self.effective_workers
+                self.done,
+                self.total,
+                self.valid,
+                self.invalid,
+                self.active_workers()
             )
         } else {
             format!(
@@ -112,10 +103,6 @@ impl App {
         }
     }
 
-    /// Start a background scan thread if one is not already running.
-    ///
-    /// The actual work is done in `scan_worker`, which sends events back
-    /// to this UI thread through the channel.
     fn start_scan(&mut self) {
         if self.scanning {
             return;
@@ -134,29 +121,23 @@ impl App {
         });
     }
 
-    /// Drain all pending worker events and update UI state.
-    ///
-    /// This keeps the GUI responsive while background verification runs.
     fn process_events(&mut self) {
         while let Ok(event) = self.rx.try_recv() {
             match event {
-                WorkerEvent::MediaFound(roots) => {
-                    if roots.is_empty() {
+                WorkerEvent::MediaFound(media_items) => {
+                    if media_items.is_empty() {
                         self.log_line("No mounted removable or optical media found.");
                     } else {
-                        self.log_line("Detected media:");
-                        for r in roots {
-                            self.log_line(format!("  - {}", r.display()));
+                        self.log_line("Detected media devices:");
+                        for (display_name, path) in media_items {
+                            self.log_line(format!("  - {} [{}]", display_name, path.display()));
                         }
                     }
-                }
-                WorkerEvent::MediaScanned { media, count } => {
-                    self.log_line(format!("Scanned {} -> found {} ISO(s)", media.display(), count));
                 }
                 WorkerEvent::JobsReady { count, workers } => {
                     self.total = count;
                     self.effective_workers = workers;
-                    self.log_line(format!("Found {count} ISO file(s)."));
+                    self.log_line(format!("Queued {count} target(s) for verification."));
                     self.log_line(format!("Using {workers} worker(s)."));
 
                     if count == 0 {
@@ -164,7 +145,7 @@ impl App {
                     }
                 }
                 WorkerEvent::FileResult {
-                    media,
+                    media_name,
                     file,
                     ok,
                     had_embedded_trailer,
@@ -173,13 +154,8 @@ impl App {
                 } => {
                     self.done += 1;
 
-                    // Keep track of how many files already had ISOB3 embedded.
                     if had_embedded_trailer {
                         self.embedded_count += 1;
-                    // If the file has neither ISOB3 nor isomd5sum, queue it for
-                    // the optional "embed trailer now" prompt at the end.
-                    } else if detail == "No ISOB3 trailer or isomd5sum implant" {
-                        self.missing_trailer_files.push(file.clone());
                     }
 
                     if ok {
@@ -188,15 +164,18 @@ impl App {
                         self.invalid += 1;
                     }
 
-                    // Pick a more specific status label for the results grid.
                     let status = if ok {
-                        if detail.starts_with("ISOB3 valid") {
-                            "VALID-ISOB3".to_string()
-                        } else if detail.starts_with("ISOMD5 valid") {
+                        if detail.starts_with("ISOMD5 valid") {
                             "VALID-ISOMD5".to_string()
+                        } else if detail.contains("ISOB3") || detail.contains("BLAKE3") {
+                            "VALID-ISOB3".to_string()
                         } else {
                             "VALID".to_string()
                         }
+                    } else if detail.starts_with("ISOMD5 invalid") {
+                        "INVALID-ISOMD5".to_string()
+                    } else if detail.contains("ISOB3") || detail.contains("BLAKE3") {
+                        "INVALID-ISOB3".to_string()
                     } else {
                         "INVALID".to_string()
                     };
@@ -209,7 +188,7 @@ impl App {
                     ));
 
                     self.results.push(ResultRow {
-                        media: media.display().to_string(),
+                        media: media_name,
                         file: file.display().to_string(),
                         status,
                         elapsed: format!("{elapsed_secs:.2}s"),
@@ -217,14 +196,8 @@ impl App {
                         ok,
                     });
 
-                    // When all files are done, stop scanning and optionally show
-                    // the prompt for embedding missing trailers.
                     if self.total > 0 && self.done == self.total {
                         self.scanning = false;
-
-                        if !self.missing_trailer_files.is_empty() {
-                            self.show_embed_prompt = true;
-                        }
                     }
                 }
                 WorkerEvent::Fatal(err) => {
@@ -238,12 +211,10 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Pull in any new background worker messages each frame.
         self.process_events();
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                // Prevent starting a second scan while one is already running.
                 if ui
                     .add_enabled(!self.scanning, egui::Button::new("Scan Media"))
                     .clicked()
@@ -251,8 +222,6 @@ impl eframe::App for App {
                     self.start_scan();
                 }
 
-                // This is a cap, not a guarantee. The worker layer decides the
-                // actual number used based on how many media roots have ISOs.
                 ui.label("Max workers:");
                 egui::ComboBox::from_id_salt("worker_count")
                     .selected_text(self.worker_count.to_string())
@@ -264,6 +233,12 @@ impl eframe::App for App {
 
                 ui.separator();
                 ui.label(self.summary_text());
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("About").clicked() {
+                        self.show_about = true;
+                    }
+                });
             });
 
             let progress = if self.total == 0 {
@@ -278,14 +253,13 @@ impl eframe::App for App {
             ui.heading("Results");
             ui.separator();
 
-            // Results grid showing one row per verified ISO.
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                 egui::Grid::new("results_grid")
                     .striped(true)
                     .min_col_width(80.0)
                     .show(ui, |ui| {
                         ui.strong("Media");
-                        ui.strong("ISO File");
+                        ui.strong("Path");
                         ui.strong("Status");
                         ui.strong("Time");
                         ui.strong("Detail");
@@ -312,7 +286,6 @@ impl eframe::App for App {
             ui.separator();
             ui.heading("Log");
 
-            // Log area sticks to the bottom so the most recent entries remain visible.
             egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
                 for line in &self.logs {
                     ui.label(line);
@@ -320,65 +293,70 @@ impl eframe::App for App {
             });
         });
 
-        // Post-scan prompt for adding ISOB3 trailers to files that had neither
-        // an ISOB3 trailer nor an isomd5sum implant.
-        if self.show_embed_prompt {
-            egui::Window::new("Some ISO files are missing BLAKE3 trailers")
+        if self.show_about {
+            egui::Window::new("About ISOB3 Media Verifier")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
-                    ui.label("One or more scanned ISO files do not contain an ISOB3 BLAKE3 trailer.");
-                    ui.label("These files also do not appear to contain an isomd5sum implant.");
-                    ui.label("Do you want to embed BLAKE3 trailers into those ISO files now?");
-                    ui.label("Warning: this will modify those ISO files by appending an ISOB3 trailer.");
+                    ui.heading("ISOB3 Media Verifier");
+                    ui.separator();
+
+                    ui.label("A desktop tool for verifying ISO media using embedded ISOB3 (BLAKE3) metadata, with ISOMD5 fallback support.");
+
                     ui.add_space(8.0);
 
-                    if self.embedding_now {
-                        ui.label("Embedding trailers...");
-                    } else {
-                        ui.horizontal(|ui| {
-                            if ui.button("Yes, embed").clicked() {
-                                self.embedding_now = true;
+                    ui.label("Features:");
+                    ui.label("• Verifies raw optical media and discovered ISO files");
+                    ui.label("• Supports ISOB3 metadata in the ISO9660 application area");
+                    ui.label("• Falls back to ISOMD5 when ISOB3 metadata is not present");
+                    ui.label("• Multi-worker scanning for fast verification");
 
-                                let files = self.missing_trailer_files.clone();
+                    ui.add_space(10.0);
+                    ui.separator();
 
-                                for path in files {
-                                    match embed_isob3_trailer(&path) {
-                                        Ok(digest) => {
-                                            self.log_line(format!(
-                                                "Embedded ISOB3 trailer into {} ({})",
-                                                path.display(),
-                                                digest
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            self.log_line(format!(
-                                                "Failed to embed trailer into {}: {}",
-                                                path.display(),
-                                                e
-                                            ));
-                                        }
-                                    }
-                                }
+                    ui.heading("Credits");
 
-                                self.log_line(
-                                    "Embedding complete. Re-scan to verify the newly embedded trailers.",
-                                );
+                    ui.add_space(6.0);
 
-                                self.embedding_now = false;
-                                self.show_embed_prompt = false;
-                            }
+                    ui.label("• ISOMD5 concept & tooling:");
+                    ui.horizontal(|ui| {
+                        ui.label("  Inspiration from isomd5sum");
+                        ui.hyperlink_to("GitHub", "https://github.com/rhinstaller/isomd5sum");
+                    });
 
-                            if ui.button("No").clicked() {
-                                self.show_embed_prompt = false;
-                            }
-                        });
+                    ui.add_space(4.0);
+
+                    ui.label("• Windows port of isomd5sum:");
+                    ui.horizontal(|ui| {
+                        ui.label("  John Pappas");
+                        ui.hyperlink_to("GitHub", "https://github.com/thepappas");
+                    });
+
+                    ui.add_space(4.0);
+
+                    ui.label("• Hashing algorithm:");
+                    ui.horizontal(|ui| {
+                        ui.label("  BLAKE3");
+                        ui.hyperlink_to("Project", "https://github.com/BLAKE3-team/BLAKE3");
+                    });
+
+                    ui.add_space(10.0);
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label("Created by William Kronfeld");
+                        ui.hyperlink_to("LinkedIn", "https://www.linkedin.com/in/william-kronfeld/");
+                    });
+
+                    ui.add_space(12.0);
+
+                    if ui.button("Close").clicked() {
+                        self.show_about = false;
                     }
                 });
         }
 
-        // Keep repainting while background work is active and to keep the log/progress fresh.
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
 }

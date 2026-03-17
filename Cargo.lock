@@ -3,24 +3,6 @@
 version = 4
 
 [[package]]
-name = "ISOB3TOOLS"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "blake3",
- "clap",
- "crossbeam-channel",
- "eframe",
- "egui",
- "md-5",
- "memmap2",
- "serde",
- "serde_json",
- "walkdir",
- "windows 0.62.2",
-]
-
-[[package]]
 name = "ab_glyph"
 version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1714,6 +1696,24 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
+name = "isob3_tools"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "clap",
+ "crossbeam-channel",
+ "eframe",
+ "egui",
+ "md-5",
+ "memmap2",
+ "serde",
+ "serde_json",
+ "walkdir",
+ "windows 0.62.2",
+]
 
 [[package]]
 name = "itoa"

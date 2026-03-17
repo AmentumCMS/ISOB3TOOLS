@@ -1,15 +1,12 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 mod app;
+mod blake3iso_core;
 mod isomd5;
 mod media;
-mod iso_scan;
-mod trailer;
 mod worker;
+
+use eframe::egui;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
