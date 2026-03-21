@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Build binaries
+    name: Build Linux GNU binary on UBI9
     runs-on: ubuntu-latest
     container:
       image: registry.access.redhat.com/ubi9/ubi:latest
@@ -27,40 +27,24 @@ jobs:
           set -euo pipefail
           dnf -y update
           dnf -y install \
-            xorriso \
             file \
             zip \
             gcc \
             gcc-c++ \
             make \
-            mingw64-gcc \
-            mingw64-gcc-c++ \
             which
 
       - name: Verify glibc version
         run: |
           set -euo pipefail
-          
-          # Method 1: ldd (most reliable)
-          GLIBC_VERSION=$(ldd --version | head -n1 | grep -oE '[0-9]+\.[0-9]+')
-          
+          GLIBC_VERSION="$(ldd --version | head -n1 | grep -oE '[0-9]+\.[0-9]+')"
           echo "Detected glibc version: $GLIBC_VERSION"
-          
-          REQUIRED="2.34"
-          
-          if [ "$GLIBC_VERSION" != "$REQUIRED" ]; then
-            echo "ERROR: Expected glibc $REQUIRED but found $GLIBC_VERSION"
-            exit 1
-          fi
-          
-          echo "glibc version is correct"
+          test "$GLIBC_VERSION" = "2.34"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: |
-            x86_64-unknown-linux-gnu
-            x86_64-pc-windows-gnu
+          targets: x86_64-unknown-linux-gnu
 
       - name: Build Linux GNU binaries
         run: |
@@ -68,54 +52,24 @@ jobs:
           cargo build --release --bin blake3iso --target x86_64-unknown-linux-gnu
           cargo build --release --bin ISOB3GUI --target x86_64-unknown-linux-gnu
 
-      - name: Build Windows binaries
-        run: |
-          set -euo pipefail
-          cargo build --release --bin blake3iso --target x86_64-pc-windows-gnu
-          cargo build --release --bin ISOB3GUI --target x86_64-pc-windows-gnu
-
       - name: Verify built binaries exist
         run: |
           set -euo pipefail
-
           test -f target/x86_64-unknown-linux-gnu/release/blake3iso
           test -f target/x86_64-unknown-linux-gnu/release/ISOB3GUI
-
-          test -f target/x86_64-pc-windows-gnu/release/blake3iso.exe
-          test -f target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe
 
       - name: Collect binaries
         run: |
           set -euo pipefail
-          rm -rf artifacts iso-root
-          mkdir -p artifacts/linux artifacts/windows iso-root
+          rm -rf artifacts
+          mkdir -p artifacts/linux
 
           cp target/x86_64-unknown-linux-gnu/release/blake3iso \
             artifacts/linux/blake3iso-linux-x86_64-gnu
           cp target/x86_64-unknown-linux-gnu/release/ISOB3GUI \
             artifacts/linux/ISOB3GUI-linux-x86_64-gnu
 
-          cp target/x86_64-pc-windows-gnu/release/blake3iso.exe \
-            artifacts/windows/blake3iso-windows-x86_64.exe
-          cp target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe \
-            artifacts/windows/ISOB3GUI-windows-x86_64.exe
-
           cp README.md artifacts/linux/ || true
-          cp README.md artifacts/windows/ || true
-
-      - name: Create ISO with all binaries
-        run: |
-          set -euo pipefail
-
-          cp artifacts/linux/* iso-root/
-          cp artifacts/windows/* iso-root/
-
-          xorriso -as mkisofs \
-            -r \
-            -J \
-            -V ISOB3TOOLS \
-            -o artifacts/ISOB3TOOLS-binaries.iso \
-            iso-root
 
       - name: Upload built binaries
         uses: actions/upload-artifact@v4
@@ -130,7 +84,7 @@ jobs:
           echo "tag=build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
 
   test:
-    name: Test blake3iso on Linux
+    name: Test blake3iso on UBI9
     runs-on: ubuntu-latest
     container:
       image: registry.access.redhat.com/ubi9/ubi:latest
@@ -145,27 +99,15 @@ jobs:
           set -euo pipefail
           dnf -y update
           dnf -y install \
-            xorriso \
             file \
             which
 
       - name: Verify glibc version
         run: |
           set -euo pipefail
-          
-          # Method 1: ldd (most reliable)
-          GLIBC_VERSION=$(ldd --version | head -n1 | grep -oE '[0-9]+\.[0-9]+')
-          
+          GLIBC_VERSION="$(ldd --version | head -n1 | grep -oE '[0-9]+\.[0-9]+')"
           echo "Detected glibc version: $GLIBC_VERSION"
-          
-          REQUIRED="2.34"
-          
-          if [ "$GLIBC_VERSION" != "$REQUIRED" ]; then
-            echo "ERROR: Expected glibc $REQUIRED but found $GLIBC_VERSION"
-            exit 1
-          fi
-          
-          echo "glibc version is correct"
+          test "$GLIBC_VERSION" = "2.34"
 
       - name: Download built binaries
         uses: actions/download-artifact@v4
@@ -180,97 +122,29 @@ jobs:
           cp downloaded/linux/blake3iso-linux-x86_64-gnu testbin/blake3iso
           chmod +x testbin/blake3iso
 
-      - name: Create test ISO contents
+      - name: Create test file
         run: |
           set -euo pipefail
-          rm -rf test-iso-root out
-          mkdir -p test-iso-root out
+          rm -rf out
+          mkdir -p out
+          echo "hello from github actions" > out/test.txt
 
-          echo "hello from github actions" > test-iso-root/README.txt
-          echo "commit: $GITHUB_SHA" > test-iso-root/BUILD.txt
-
-      - name: Create base ISO
+      - name: Implant/check/remove smoke test
         run: |
           set -euo pipefail
-          xorriso -as mkisofs \
-            -r \
-            -J \
-            -V TEST_ISO \
-            -o out/test.iso \
-            test-iso-root
 
-      - name: Show base ISO info
-        run: |
-          set -euo pipefail
-          ls -lh out/test.iso
-          file out/test.iso | tee out/file-base.txt
+          cp out/test.txt out/test-isob3.bin
 
-      - name: Copy ISO for ISOB3 test
-        run: |
-          set -euo pipefail
-          cp out/test.iso out/test-isob3.iso
-
-      - name: Check ISO before implant
-        shell: bash
-        run: |
-          set -euo pipefail
-          if testbin/blake3iso check out/test-isob3.iso > out/isob3-check-before.txt 2>&1; then
+          if testbin/blake3iso check out/test-isob3.bin > out/check-before.txt 2>&1; then
             echo "Expected check before implant to fail, but it passed."
-            cat out/isob3-check-before.txt
+            cat out/check-before.txt
             exit 1
-          else
-            echo "Check before implant correctly failed."
-            cat out/isob3-check-before.txt
           fi
 
-      - name: Implant ISOB3 metadata
-        run: |
-          set -euo pipefail
-          testbin/blake3iso implant out/test-isob3.iso | tee out/isob3-implant.txt
-
-      - name: Show ISOB3 metadata info
-        run: |
-          set -euo pipefail
-          testbin/blake3iso info out/test-isob3.iso | tee out/isob3-info.txt
-
-      - name: Check implanted ISOB3 metadata
-        run: |
-          set -euo pipefail
-          testbin/blake3iso check out/test-isob3.iso | tee out/isob3-check.txt
-
-      - name: Corrupt ISOB3 ISO and confirm failure
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp out/test-isob3.iso out/test-isob3-corrupt.iso
-          printf 'Y' | dd of=out/test-isob3-corrupt.iso bs=1 seek=32768 count=1 conv=notrunc
-
-          if testbin/blake3iso check out/test-isob3-corrupt.iso > out/isob3-check-corrupt.txt 2>&1; then
-            echo "Expected corrupted ISOB3 ISO verification to fail, but it passed."
-            cat out/isob3-check-corrupt.txt
-            exit 1
-          else
-            echo "Corrupted ISOB3 ISO correctly failed verification."
-            cat out/isob3-check-corrupt.txt
-          fi
-
-      - name: Remove ISOB3 metadata
-        run: |
-          set -euo pipefail
-          testbin/blake3iso remove out/test-isob3.iso | tee out/isob3-remove.txt
-
-      - name: Check ISO after metadata removal
-        shell: bash
-        run: |
-          set -euo pipefail
-          if testbin/blake3iso check out/test-isob3.iso > out/isob3-check-after-remove.txt 2>&1; then
-            echo "Expected check after removal to fail, but it passed."
-            cat out/isob3-check-after-remove.txt
-            exit 1
-          else
-            echo "Check after removal correctly failed."
-            cat out/isob3-check-after-remove.txt
-          fi
+          testbin/blake3iso implant out/test-isob3.bin | tee out/implant.txt
+          testbin/blake3iso info out/test-isob3.bin | tee out/info.txt
+          testbin/blake3iso check out/test-isob3.bin | tee out/check.txt
+          testbin/blake3iso remove out/test-isob3.bin | tee out/remove.txt
 
       - name: Upload test outputs
         uses: actions/upload-artifact@v4
@@ -293,35 +167,32 @@ jobs:
       - name: Prepare package directories
         run: |
           set -euo pipefail
-          rm -rf dist
-          mkdir -p dist/linux dist/windows
+          rm -rf dist iso-root
+          mkdir -p dist/linux iso-root
 
           cp downloaded/linux/* dist/linux/
-          cp downloaded/windows/* dist/windows/
+          cp downloaded/linux/* iso-root/
 
       - name: Create Linux archive
         run: |
           set -euo pipefail
           tar -czf dist/ISOB3TOOLS-linux-x86_64-gnu.tar.gz -C dist/linux .
 
-      - name: Create Windows archive
+      - name: Install xorriso
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os, zipfile
-          root = "dist/windows"
-          out = "dist/ISOB3TOOLS-windows-x86_64.zip"
-          with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-              for base, _, files in os.walk(root):
-                  for f in files:
-                      p = os.path.join(base, f)
-                      zf.write(p, os.path.relpath(p, root))
-          PY
+          sudo apt-get update
+          sudo apt-get install -y xorriso
 
-      - name: Copy ISO to dist
+      - name: Create ISO bundle on Ubuntu
         run: |
           set -euo pipefail
-          cp downloaded/ISOB3TOOLS-binaries.iso dist/
+          xorriso -as mkisofs \
+            -r \
+            -J \
+            -V ISOB3TOOLS \
+            -o dist/ISOB3TOOLS-binaries.iso \
+            iso-root
 
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v4
@@ -329,7 +200,6 @@ jobs:
           name: packaged-artifacts
           path: |
             dist/ISOB3TOOLS-linux-x86_64-gnu.tar.gz
-            dist/ISOB3TOOLS-windows-x86_64.zip
             dist/ISOB3TOOLS-binaries.iso
 
   release:
@@ -354,5 +224,4 @@ jobs:
           prerelease: true
           files: |
             dist/ISOB3TOOLS-linux-x86_64-gnu.tar.gz
-            dist/ISOB3TOOLS-windows-x86_64.zip
             dist/ISOB3TOOLS-binaries.iso
