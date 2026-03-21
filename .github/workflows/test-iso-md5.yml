@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build Linux GNU binary on UBI9
+  build-linux-ubi:
+    name: Build Linux GNU binaries on UBI9
     runs-on: ubuntu-latest
     container:
       image: registry.access.redhat.com/ubi9/ubi:latest
@@ -28,7 +28,6 @@ jobs:
           dnf -y update
           dnf -y install \
             file \
-            zip \
             gcc \
             gcc-c++ \
             make \
@@ -52,13 +51,13 @@ jobs:
           cargo build --release --bin blake3iso --target x86_64-unknown-linux-gnu
           cargo build --release --bin ISOB3GUI --target x86_64-unknown-linux-gnu
 
-      - name: Verify built binaries exist
+      - name: Verify built Linux binaries exist
         run: |
           set -euo pipefail
           test -f target/x86_64-unknown-linux-gnu/release/blake3iso
           test -f target/x86_64-unknown-linux-gnu/release/ISOB3GUI
 
-      - name: Collect binaries
+      - name: Collect Linux binaries
         run: |
           set -euo pipefail
           rm -rf artifacts
@@ -71,11 +70,11 @@ jobs:
 
           cp README.md artifacts/linux/ || true
 
-      - name: Upload built binaries
+      - name: Upload Linux binaries
         uses: actions/upload-artifact@v4
         with:
-          name: built-binaries
-          path: artifacts/**
+          name: built-binaries-linux
+          path: artifacts/linux/**
 
       - name: Generate release tag
         if: github.event_name != 'pull_request'
@@ -83,12 +82,12 @@ jobs:
         run: |
           echo "tag=build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
 
-  test:
+  test-linux-ubi:
     name: Test blake3iso on UBI9
     runs-on: ubuntu-latest
     container:
       image: registry.access.redhat.com/ubi9/ubi:latest
-    needs: build
+    needs: build-linux-ubi
 
     steps:
       - name: Checkout
@@ -109,17 +108,17 @@ jobs:
           echo "Detected glibc version: $GLIBC_VERSION"
           test "$GLIBC_VERSION" = "2.34"
 
-      - name: Download built binaries
+      - name: Download Linux binaries
         uses: actions/download-artifact@v4
         with:
-          name: built-binaries
+          name: built-binaries-linux
           path: downloaded
 
       - name: Prepare test binary
         run: |
           set -euo pipefail
           mkdir -p testbin
-          cp downloaded/linux/blake3iso-linux-x86_64-gnu testbin/blake3iso
+          cp downloaded/blake3iso-linux-x86_64-gnu testbin/blake3iso
           chmod +x testbin/blake3iso
 
       - name: Create test file
@@ -146,43 +145,110 @@ jobs:
           testbin/blake3iso check out/test-isob3.bin | tee out/check.txt
           testbin/blake3iso remove out/test-isob3.bin | tee out/remove.txt
 
-      - name: Upload test outputs
+      - name: Upload Linux test outputs
         uses: actions/upload-artifact@v4
         with:
           name: test-outputs-linux-gnu
           path: out/
 
+  build-windows:
+    name: Build Windows binaries on Ubuntu
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Build Windows binaries
+        run: |
+          set -euo pipefail
+          cargo build --release --bin blake3iso --target x86_64-pc-windows-gnu
+          cargo build --release --bin ISOB3GUI --target x86_64-pc-windows-gnu
+
+      - name: Verify built Windows binaries exist
+        run: |
+          set -euo pipefail
+          test -f target/x86_64-pc-windows-gnu/release/blake3iso.exe
+          test -f target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe
+
+      - name: Collect Windows binaries
+        run: |
+          set -euo pipefail
+          rm -rf artifacts
+          mkdir -p artifacts/windows
+
+          cp target/x86_64-pc-windows-gnu/release/blake3iso.exe \
+            artifacts/windows/blake3iso-windows-x86_64.exe
+          cp target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe \
+            artifacts/windows/ISOB3GUI-windows-x86_64.exe
+
+          cp README.md artifacts/windows/ || true
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-binaries-windows
+          path: artifacts/windows/**
+
   package:
     name: Package release artifacts
     runs-on: ubuntu-latest
-    needs: [build, test]
+    needs: [build-linux-ubi, test-linux-ubi, build-windows]
 
     steps:
-      - name: Download built binaries
+      - name: Download Linux binaries
         uses: actions/download-artifact@v4
         with:
-          name: built-binaries
-          path: downloaded
+          name: built-binaries-linux
+          path: downloaded/linux
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: built-binaries-windows
+          path: downloaded/windows
 
       - name: Prepare package directories
         run: |
           set -euo pipefail
           rm -rf dist iso-root
-          mkdir -p dist/linux iso-root
+          mkdir -p dist/linux dist/windows iso-root
 
           cp downloaded/linux/* dist/linux/
+          cp downloaded/windows/* dist/windows/
+
           cp downloaded/linux/* iso-root/
+          cp downloaded/windows/* iso-root/
 
       - name: Create Linux archive
         run: |
           set -euo pipefail
           tar -czf dist/ISOB3TOOLS-linux-x86_64-gnu.tar.gz -C dist/linux .
 
+      - name: Create Windows archive
+        run: |
+          set -euo pipefail
+          (
+            cd dist/windows
+            zip -r ../ISOB3TOOLS-windows-x86_64.zip .
+          )
+
       - name: Install xorriso
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y xorriso
+          sudo apt-get install -y xorriso zip
 
       - name: Create ISO bundle on Ubuntu
         run: |
@@ -200,13 +266,14 @@ jobs:
           name: packaged-artifacts
           path: |
             dist/ISOB3TOOLS-linux-x86_64-gnu.tar.gz
+            dist/ISOB3TOOLS-windows-x86_64.zip
             dist/ISOB3TOOLS-binaries.iso
 
   release:
     name: Create GitHub release
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: [build, test, package]
+    needs: [build-linux-ubi, test-linux-ubi, build-windows, package]
 
     steps:
       - name: Download packaged artifacts
@@ -218,10 +285,11 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.build.outputs.release_tag }}
-          name: ISOB3TOOLS ${{ needs.build.outputs.release_tag }}
+          tag_name: ${{ needs.build-linux-ubi.outputs.release_tag }}
+          name: ISOB3TOOLS ${{ needs.build-linux-ubi.outputs.release_tag }}
           generate_release_notes: true
           prerelease: true
           files: |
             dist/ISOB3TOOLS-linux-x86_64-gnu.tar.gz
+            dist/ISOB3TOOLS-windows-x86_64.zip
             dist/ISOB3TOOLS-binaries.iso
