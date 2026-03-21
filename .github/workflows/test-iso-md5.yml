@@ -24,20 +24,42 @@ jobs:
 
       - name: Install system packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          set -euo pipefail
+          dnf -y update
+          dnf -y install \
             xorriso \
             file \
             zip \
-            mingw-w64 \
-            musl-tools
+            gcc \
+            gcc-c++ \
+            make \
+            mingw64-gcc \
+            mingw64-gcc-c++ \
+            which
+
+      - name: Verify glibc version
+        run: |
+          set -euo pipefail
+          
+          # Method 1: ldd (most reliable)
+          GLIBC_VERSION=$(ldd --version | head -n1 | grep -oE '[0-9]+\.[0-9]+')
+          
+          echo "Detected glibc version: $GLIBC_VERSION"
+          
+          REQUIRED="2.34"
+          
+          if [ "$GLIBC_VERSION" != "$REQUIRED" ]; then
+            echo "ERROR: Expected glibc $REQUIRED but found $GLIBC_VERSION"
+            exit 1
+          fi
+          
+          echo "glibc version is correct"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: |
             x86_64-unknown-linux-gnu
-            x86_64-unknown-linux-musl
             x86_64-pc-windows-gnu
 
       - name: Build Linux GNU binaries
@@ -45,14 +67,6 @@ jobs:
           set -euo pipefail
           cargo build --release --bin blake3iso --target x86_64-unknown-linux-gnu
           cargo build --release --bin ISOB3GUI --target x86_64-unknown-linux-gnu
-
-      - name: Build Linux musl binaries
-        env:
-          CC_x86_64_unknown_linux_musl: musl-gcc
-        run: |
-          set -euo pipefail
-          cargo build --release --bin blake3iso --target x86_64-unknown-linux-musl
-          cargo build --release --bin ISOB3GUI --target x86_64-unknown-linux-musl
 
       - name: Build Windows binaries
         run: |
@@ -67,9 +81,6 @@ jobs:
           test -f target/x86_64-unknown-linux-gnu/release/blake3iso
           test -f target/x86_64-unknown-linux-gnu/release/ISOB3GUI
 
-          test -f target/x86_64-unknown-linux-musl/release/blake3iso
-          test -f target/x86_64-unknown-linux-musl/release/ISOB3GUI
-
           test -f target/x86_64-pc-windows-gnu/release/blake3iso.exe
           test -f target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe
 
@@ -83,11 +94,6 @@ jobs:
             artifacts/linux/blake3iso-linux-x86_64-gnu
           cp target/x86_64-unknown-linux-gnu/release/ISOB3GUI \
             artifacts/linux/ISOB3GUI-linux-x86_64-gnu
-
-          cp target/x86_64-unknown-linux-musl/release/blake3iso \
-            artifacts/linux/blake3iso-linux-x86_64-musl
-          cp target/x86_64-unknown-linux-musl/release/ISOB3GUI \
-            artifacts/linux/ISOB3GUI-linux-x86_64-musl
 
           cp target/x86_64-pc-windows-gnu/release/blake3iso.exe \
             artifacts/windows/blake3iso-windows-x86_64.exe
@@ -126,16 +132,9 @@ jobs:
   test:
     name: Test blake3iso on Linux
     runs-on: ubuntu-latest
+    container:
+      image: registry.access.redhat.com/ubi9/ubi:latest
     needs: build
-
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
-        binary_name:
-          - blake3iso
 
     steps:
       - name: Checkout
@@ -143,11 +142,30 @@ jobs:
 
       - name: Install system packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          set -euo pipefail
+          dnf -y update
+          dnf -y install \
             xorriso \
             file \
-            musl-tools
+            which
+
+      - name: Verify glibc version
+        run: |
+          set -euo pipefail
+          
+          # Method 1: ldd (most reliable)
+          GLIBC_VERSION=$(ldd --version | head -n1 | grep -oE '[0-9]+\.[0-9]+')
+          
+          echo "Detected glibc version: $GLIBC_VERSION"
+          
+          REQUIRED="2.34"
+          
+          if [ "$GLIBC_VERSION" != "$REQUIRED" ]; then
+            echo "ERROR: Expected glibc $REQUIRED but found $GLIBC_VERSION"
+            exit 1
+          fi
+          
+          echo "glibc version is correct"
 
       - name: Download built binaries
         uses: actions/download-artifact@v4
@@ -159,13 +177,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p testbin
-
-          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
-            cp downloaded/linux/blake3iso-linux-x86_64-gnu testbin/blake3iso
-          else
-            cp downloaded/linux/blake3iso-linux-x86_64-musl testbin/blake3iso
-          fi
-
+          cp downloaded/linux/blake3iso-linux-x86_64-gnu testbin/blake3iso
           chmod +x testbin/blake3iso
 
       - name: Create test ISO contents
@@ -263,7 +275,7 @@ jobs:
       - name: Upload test outputs
         uses: actions/upload-artifact@v4
         with:
-          name: test-outputs-${{ matrix.target }}
+          name: test-outputs-linux-gnu
           path: out/
 
   package:
@@ -272,14 +284,6 @@ jobs:
     needs: [build, test]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install packaging tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zip
-
       - name: Download built binaries
         uses: actions/download-artifact@v4
         with:
@@ -298,15 +302,21 @@ jobs:
       - name: Create Linux archive
         run: |
           set -euo pipefail
-          tar -czf dist/ISOB3TOOLS-linux-x86_64-multi.tar.gz -C dist/linux .
+          tar -czf dist/ISOB3TOOLS-linux-x86_64-gnu.tar.gz -C dist/linux .
 
       - name: Create Windows archive
         run: |
           set -euo pipefail
-          (
-            cd dist/windows
-            zip -r ../ISOB3TOOLS-windows-x86_64.zip .
-          )
+          python3 - <<'PY'
+          import os, zipfile
+          root = "dist/windows"
+          out = "dist/ISOB3TOOLS-windows-x86_64.zip"
+          with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+              for base, _, files in os.walk(root):
+                  for f in files:
+                      p = os.path.join(base, f)
+                      zf.write(p, os.path.relpath(p, root))
+          PY
 
       - name: Copy ISO to dist
         run: |
@@ -318,7 +328,7 @@ jobs:
         with:
           name: packaged-artifacts
           path: |
-            dist/ISOB3TOOLS-linux-x86_64-multi.tar.gz
+            dist/ISOB3TOOLS-linux-x86_64-gnu.tar.gz
             dist/ISOB3TOOLS-windows-x86_64.zip
             dist/ISOB3TOOLS-binaries.iso
 
@@ -343,6 +353,6 @@ jobs:
           generate_release_notes: true
           prerelease: true
           files: |
-            dist/ISOB3TOOLS-linux-x86_64-multi.tar.gz
+            dist/ISOB3TOOLS-linux-x86_64-gnu.tar.gz
             dist/ISOB3TOOLS-windows-x86_64.zip
             dist/ISOB3TOOLS-binaries.iso
