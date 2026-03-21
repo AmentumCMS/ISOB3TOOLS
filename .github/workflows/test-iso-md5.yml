@@ -82,75 +82,6 @@ jobs:
         run: |
           echo "tag=build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
 
-  test-linux-ubi:
-    name: Test blake3iso on UBI9
-    runs-on: ubuntu-latest
-    container:
-      image: registry.access.redhat.com/ubi9/ubi:latest
-    needs: build-linux-ubi
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install system packages
-        run: |
-          set -euo pipefail
-          dnf -y update
-          dnf -y install \
-            file \
-            which
-
-      - name: Verify glibc version
-        run: |
-          set -euo pipefail
-          GLIBC_VERSION="$(ldd --version | head -n1 | grep -oE '[0-9]+\.[0-9]+')"
-          echo "Detected glibc version: $GLIBC_VERSION"
-          test "$GLIBC_VERSION" = "2.34"
-
-      - name: Download Linux binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: built-binaries-linux
-          path: downloaded
-
-      - name: Prepare test binary
-        run: |
-          set -euo pipefail
-          mkdir -p testbin
-          cp downloaded/blake3iso-linux-x86_64-gnu testbin/blake3iso
-          chmod +x testbin/blake3iso
-
-      - name: Create test file
-        run: |
-          set -euo pipefail
-          rm -rf out
-          mkdir -p out
-          echo "hello from github actions" > out/test.txt
-
-      - name: Implant/check/remove smoke test
-        run: |
-          set -euo pipefail
-
-          cp out/test.txt out/test-isob3.bin
-
-          if testbin/blake3iso check out/test-isob3.bin > out/check-before.txt 2>&1; then
-            echo "Expected check before implant to fail, but it passed."
-            cat out/check-before.txt
-            exit 1
-          fi
-
-          testbin/blake3iso implant out/test-isob3.bin | tee out/implant.txt
-          testbin/blake3iso info out/test-isob3.bin | tee out/info.txt
-          testbin/blake3iso check out/test-isob3.bin | tee out/check.txt
-          testbin/blake3iso remove out/test-isob3.bin | tee out/remove.txt
-
-      - name: Upload Linux test outputs
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-outputs-linux-gnu
-          path: out/
-
   build-windows:
     name: Build Windows binaries on Ubuntu
     runs-on: ubuntu-latest
@@ -200,6 +131,167 @@ jobs:
         with:
           name: built-binaries-windows
           path: artifacts/windows/**
+
+  make-test-iso:
+    name: Create real test ISO on Ubuntu
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install xorriso
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xorriso
+
+      - name: Create test ISO contents
+        run: |
+          set -euo pipefail
+          rm -rf test-iso-root out
+          mkdir -p test-iso-root out
+
+          echo "hello from github actions" > test-iso-root/README.txt
+          echo "commit: $GITHUB_SHA" > test-iso-root/BUILD.txt
+
+      - name: Create base ISO
+        run: |
+          set -euo pipefail
+          xorriso -as mkisofs \
+            -r \
+            -J \
+            -V TEST_ISO \
+            -o out/test.iso \
+            test-iso-root
+
+      - name: Upload test ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-iso
+          path: out/test.iso
+
+  test-linux-ubi:
+    name: Test blake3iso on UBI9
+    runs-on: ubuntu-latest
+    container:
+      image: registry.access.redhat.com/ubi9/ubi:latest
+    needs: [build-linux-ubi, make-test-iso]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          set -euo pipefail
+          dnf -y update
+          dnf -y install \
+            file \
+            which
+
+      - name: Verify glibc version
+        run: |
+          set -euo pipefail
+          GLIBC_VERSION="$(ldd --version | head -n1 | grep -oE '[0-9]+\.[0-9]+')"
+          echo "Detected glibc version: $GLIBC_VERSION"
+          test "$GLIBC_VERSION" = "2.34"
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: built-binaries-linux
+          path: downloaded/linux
+
+      - name: Download test ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: test-iso
+          path: downloaded/test-iso
+
+      - name: Prepare test binary
+        run: |
+          set -euo pipefail
+          mkdir -p testbin out
+          cp downloaded/linux/blake3iso-linux-x86_64-gnu testbin/blake3iso
+          chmod +x testbin/blake3iso
+          cp downloaded/test-iso/test.iso out/test.iso
+
+      - name: Show base ISO info
+        run: |
+          set -euo pipefail
+          ls -lh out/test.iso
+          file out/test.iso | tee out/file-base.txt
+
+      - name: Copy ISO for ISOB3 test
+        run: |
+          set -euo pipefail
+          cp out/test.iso out/test-isob3.iso
+
+      - name: Check ISO before implant
+        shell: bash
+        run: |
+          set -euo pipefail
+          if testbin/blake3iso check out/test-isob3.iso > out/isob3-check-before.txt 2>&1; then
+            echo "Expected check before implant to fail, but it passed."
+            cat out/isob3-check-before.txt
+            exit 1
+          else
+            echo "Check before implant correctly failed."
+            cat out/isob3-check-before.txt
+          fi
+
+      - name: Implant ISOB3 metadata
+        run: |
+          set -euo pipefail
+          testbin/blake3iso implant out/test-isob3.iso | tee out/isob3-implant.txt
+
+      - name: Show ISOB3 metadata info
+        run: |
+          set -euo pipefail
+          testbin/blake3iso info out/test-isob3.iso | tee out/isob3-info.txt
+
+      - name: Check implanted ISOB3 metadata
+        run: |
+          set -euo pipefail
+          testbin/blake3iso check out/test-isob3.iso | tee out/isob3-check.txt
+
+      - name: Corrupt ISOB3 ISO and confirm failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp out/test-isob3.iso out/test-isob3-corrupt.iso
+          printf 'Y' | dd of=out/test-isob3-corrupt.iso bs=1 seek=32768 count=1 conv=notrunc
+
+          if testbin/blake3iso check out/test-isob3-corrupt.iso > out/isob3-check-corrupt.txt 2>&1; then
+            echo "Expected corrupted ISOB3 ISO verification to fail, but it passed."
+            cat out/isob3-check-corrupt.txt
+            exit 1
+          else
+            echo "Corrupted ISOB3 ISO correctly failed verification."
+            cat out/isob3-check-corrupt.txt
+          fi
+
+      - name: Remove ISOB3 metadata
+        run: |
+          set -euo pipefail
+          testbin/blake3iso remove out/test-isob3.iso | tee out/isob3-remove.txt
+
+      - name: Check ISO after metadata removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          if testbin/blake3iso check out/test-isob3.iso > out/isob3-check-after-remove.txt 2>&1; then
+            echo "Expected check after removal to fail, but it passed."
+            cat out/isob3-check-after-remove.txt
+            exit 1
+          else
+            echo "Check after removal correctly failed."
+            cat out/isob3-check-after-remove.txt
+          fi
+
+      - name: Upload Linux test outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-outputs-linux-gnu
+          path: out/
 
   package:
     name: Package release artifacts
