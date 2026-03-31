@@ -1,12 +1,15 @@
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 use blake3::Hasher;
 
 const ISO_SECTOR_SIZE: u64 = 2048;
 const PVD_SECTOR: u64 = 16;
 const PVD_OFFSET: u64 = PVD_SECTOR * ISO_SECTOR_SIZE;
+const PVD_SIZE: usize = 2048;
 
 const APPDATA_OFFSET: u64 = 0x8373;
 const APPDATA_SIZE: usize = 512;
@@ -17,6 +20,8 @@ const VERSION: u8 = 1;
 const ALGO_BLAKE3_256: u8 = 1;
 const FLAGS: u32 = 0;
 const DIGEST_LEN: u16 = 32;
+const READ_RETRY_COUNT: usize = 4;
+const READ_RETRY_DELAY_MS: u64 = 250;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -68,12 +73,13 @@ fn ensure_writable_file(path: &Path) -> Result<(), String> {
 fn is_probably_iso(path: &Path) -> Result<(), String> {
     let mut pvd = [0u8; 7];
     read_exact_at(path, PVD_OFFSET, &mut pvd)?;
+    validate_pvd(&pvd)
+}
 
-    // The primary volume descriptor is the cheapest reliable ISO9660 sanity check.
+fn validate_pvd(pvd: &[u8]) -> Result<(), String> {
     if pvd[0] != 1 || &pvd[1..6] != b"CD001" || pvd[6] != 1 {
         return Err("not a recognizable ISO9660 primary volume descriptor".to_string());
     }
-
     Ok(())
 }
 
@@ -99,7 +105,27 @@ fn write_appdata(path: &Path, appdata: &[u8; APPDATA_SIZE]) -> Result<(), String
     Ok(())
 }
 
-fn compute_blake3_normalized(path: &Path, chunk_size: usize) -> Result<[u8; 32], String> {
+fn compute_blake3_normalized<F>(
+    path: &Path,
+    chunk_size: usize,
+    progress: F,
+) -> Result<[u8; 32], String>
+where
+    F: FnMut(u64),
+{
+    compute_blake3_normalized_with_cancel(path, chunk_size, progress, || false)
+}
+
+fn compute_blake3_normalized_with_cancel<F, G>(
+    path: &Path,
+    chunk_size: usize,
+    mut progress: F,
+    mut should_abort: G,
+) -> Result<[u8; 32], String>
+where
+    F: FnMut(u64),
+    G: FnMut() -> bool,
+{
     let mut file = File::open(path).map_err(|e| format!("open failed: {e}"))?;
     let mut hasher = Hasher::new();
     let mut buf = vec![0u8; chunk_size];
@@ -110,7 +136,11 @@ fn compute_blake3_normalized(path: &Path, chunk_size: usize) -> Result<[u8; 32],
     let app_end = APPDATA_OFFSET + APPDATA_SIZE as u64;
 
     loop {
-        let n = file.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+        if should_abort() {
+            return Err("operation aborted".to_string());
+        }
+
+        let n = read_with_retries(path, &mut file, &mut buf)?;
         if n == 0 {
             break;
         }
@@ -130,6 +160,7 @@ fn compute_blake3_normalized(path: &Path, chunk_size: usize) -> Result<[u8; 32],
 
         hasher.update(chunk);
         offset += n as u64;
+        progress(n as u64);
     }
 
     Ok(*hasher.finalize().as_bytes())
@@ -147,8 +178,10 @@ fn hex(bytes: &[u8]) -> String {
 
 fn read_metadata(path: &Path) -> Result<Option<[u8; 32]>, String> {
     let buf = read_appdata(path)?;
+    read_metadata_from_appdata(&buf)
+}
 
-    // Treat unknown versions or layouts as "missing" instead of a hard failure.
+fn read_metadata_from_appdata(buf: &[u8; APPDATA_SIZE]) -> Result<Option<[u8; 32]>, String> {
     if &buf[0..8] != MAGIC {
         return Ok(None);
     }
@@ -167,7 +200,27 @@ fn read_metadata(path: &Path) -> Result<Option<[u8; 32]>, String> {
     Ok(Some(digest))
 }
 
+#[allow(dead_code)]
 pub fn check_iso(path: &Path) -> Result<CheckOutcome, String> {
+    check_iso_with_progress(path, |_| {})
+}
+
+pub fn check_iso_with_progress<F>(path: &Path, progress: F) -> Result<CheckOutcome, String>
+where
+    F: FnMut(u64),
+{
+    check_iso_with_progress_and_cancel(path, progress, || false)
+}
+
+pub fn check_iso_with_progress_and_cancel<F, G>(
+    path: &Path,
+    progress: F,
+    should_abort: G,
+) -> Result<CheckOutcome, String>
+where
+    F: FnMut(u64),
+    G: FnMut() -> bool,
+{
     ensure_readable(path)?;
     is_probably_iso(path)?;
 
@@ -176,7 +229,7 @@ pub fn check_iso(path: &Path) -> Result<CheckOutcome, String> {
         None => return Ok(CheckOutcome::Missing),
     };
 
-    let actual = compute_blake3_normalized(path, 1024 * 1024)?;
+    let actual = compute_blake3_normalized_with_cancel(path, 1024 * 1024, progress, should_abort)?;
 
     let stored_hex = hex(&stored);
     let actual_hex = hex(&actual);
@@ -190,11 +243,61 @@ pub fn check_iso(path: &Path) -> Result<CheckOutcome, String> {
         Ok(CheckOutcome::Invalid {
             expected_hex: stored_hex.clone(),
             actual_hex: actual_hex.clone(),
-            detail: format!(
-                "ISOB3 mismatch\nExpected: {stored_hex}\nActual:   {actual_hex}"
-            ),
+            detail: format!("ISOB3 mismatch\nExpected: {stored_hex}\nActual:   {actual_hex}"),
         })
     }
+}
+
+pub fn check_iso_bytes(bytes: &[u8]) -> Result<CheckOutcome, String> {
+    if bytes.len() < (PVD_OFFSET as usize + 7) {
+        return Err("file too small to contain an ISO9660 primary volume descriptor".to_string());
+    }
+
+    validate_pvd(&bytes[PVD_OFFSET as usize..PVD_OFFSET as usize + 7])?;
+
+    if bytes.len() < APPDATA_OFFSET as usize + APPDATA_SIZE {
+        return Err("file too small to contain ISOB3 metadata".to_string());
+    }
+
+    let mut appdata = [0u8; APPDATA_SIZE];
+    appdata
+        .copy_from_slice(&bytes[APPDATA_OFFSET as usize..APPDATA_OFFSET as usize + APPDATA_SIZE]);
+
+    let stored = match read_metadata_from_appdata(&appdata)? {
+        Some(d) => d,
+        None => return Ok(CheckOutcome::Missing),
+    };
+
+    let actual = compute_blake3_normalized_bytes(bytes);
+    let stored_hex = hex(&stored);
+    let actual_hex = hex(&actual);
+
+    if stored == actual {
+        Ok(CheckOutcome::Valid {
+            digest_hex: actual_hex.clone(),
+            detail: format!("ISOB3 valid ({actual_hex})"),
+        })
+    } else {
+        Ok(CheckOutcome::Invalid {
+            expected_hex: stored_hex.clone(),
+            actual_hex: actual_hex.clone(),
+            detail: format!("ISOB3 mismatch\nExpected: {stored_hex}\nActual:   {actual_hex}"),
+        })
+    }
+}
+
+pub fn estimate_iso_bytes(path: &Path) -> Result<u64, String> {
+    let mut pvd = [0u8; PVD_SIZE];
+    read_exact_at(path, PVD_OFFSET, &mut pvd)?;
+    validate_pvd(&pvd[..7])?;
+
+    let sector_count = u32::from_le_bytes(
+        pvd[80..84]
+            .try_into()
+            .map_err(|_| "invalid volume space size in PVD".to_string())?,
+    ) as u64;
+
+    Ok(sector_count.saturating_mul(ISO_SECTOR_SIZE))
 }
 
 #[allow(dead_code)]
@@ -214,7 +317,7 @@ pub fn implant_iso(path: &Path, force: bool) -> Result<String, String> {
     let blank = [APPDATA_FILL; APPDATA_SIZE];
     write_appdata(path, &blank)?;
 
-    let digest = compute_blake3_normalized(path, 1024 * 1024)?;
+    let digest = compute_blake3_normalized(path, 1024 * 1024, |_| {})?;
 
     let mut new = [APPDATA_FILL; APPDATA_SIZE];
     new[0..8].copy_from_slice(MAGIC);
@@ -289,8 +392,7 @@ fn read_exact_at(path: &Path, offset: u64, buf: &mut [u8]) -> Result<(), String>
     let mut f = File::open(path).map_err(|e| format!("open failed: {e}"))?;
     f.seek(SeekFrom::Start(offset))
         .map_err(|e| format!("seek failed: {e}"))?;
-    f.read_exact(buf)
-        .map_err(|e| format!("read failed: {e}"))?;
+    read_exact_with_retries(path, &mut f, buf)?;
     Ok(())
 }
 
@@ -308,10 +410,56 @@ fn read_exact_at_raw(path: &Path, offset: u64, out: &mut [u8]) -> Result<(), Str
     let mut buf = vec![0u8; sector_count * sector_size];
     f.seek(SeekFrom::Start(aligned))
         .map_err(|e| format!("seek failed: {e}"))?;
-    f.read_exact(&mut buf)
-        .map_err(|e| format!("read failed: {e}"))?;
+    read_exact_with_retries(path, &mut f, &mut buf)?;
 
     let local = (offset - aligned) as usize;
     out.copy_from_slice(&buf[local..local + out.len()]);
     Ok(())
+}
+
+fn compute_blake3_normalized_bytes(bytes: &[u8]) -> [u8; 32] {
+    let mut normalized = bytes.to_vec();
+    let start = APPDATA_OFFSET as usize;
+    let end = start.saturating_add(APPDATA_SIZE).min(normalized.len());
+    if start < end {
+        normalized[start..end].fill(APPDATA_FILL);
+    }
+    *blake3::hash(&normalized).as_bytes()
+}
+
+fn read_with_retries(path: &Path, file: &mut File, buf: &mut [u8]) -> Result<usize, String> {
+    retry_read(path, || file.read(buf))
+}
+
+fn read_exact_with_retries(path: &Path, file: &mut File, buf: &mut [u8]) -> Result<(), String> {
+    retry_read(path, || file.read_exact(buf))
+}
+
+fn retry_read<T, F>(path: &Path, mut op: F) -> Result<T, String>
+where
+    F: FnMut() -> io::Result<T>,
+{
+    let mut last_err = None;
+
+    for attempt in 0..READ_RETRY_COUNT {
+        match op() {
+            Ok(value) => return Ok(value),
+            Err(err) if should_retry_read(path, &err) && attempt + 1 < READ_RETRY_COUNT => {
+                last_err = Some(err);
+                thread::sleep(Duration::from_millis(READ_RETRY_DELAY_MS));
+            }
+            Err(err) => return Err(format!("read failed: {err}")),
+        }
+    }
+
+    Err(format!(
+        "read failed: {}",
+        last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unknown read error".to_string())
+    ))
+}
+
+fn should_retry_read(path: &Path, err: &io::Error) -> bool {
+    is_windows_raw_device(path) && err.raw_os_error() == Some(121)
 }

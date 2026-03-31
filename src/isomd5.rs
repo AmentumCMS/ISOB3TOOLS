@@ -85,8 +85,12 @@ fn materialize_embedded_checkisomd5() -> Result<PathBuf, String> {
     path.push(file_name);
 
     // Ship the checker as an embedded asset to avoid an external runtime dependency.
-    fs::write(&path, CHECKISOMD5_BYTES)
-        .map_err(|e| format!("failed to write embedded checker to {}: {e}", path.display()))?;
+    fs::write(&path, CHECKISOMD5_BYTES).map_err(|e| {
+        format!(
+            "failed to write embedded checker to {}: {e}",
+            path.display()
+        )
+    })?;
 
     #[cfg(unix)]
     {
@@ -113,13 +117,11 @@ pub fn has_isomd5sum_implant(path: &Path) -> Result<bool, String> {
     // The legacy implant stores recognizable ASCII markers in the PVD/application area.
     let text = text.to_ascii_uppercase();
 
-    Ok(
-        text.contains("ISO MD5SUM = ")
-            || text.contains("FRAGMENT SUMS = ")
-            || text.contains("FRAGMENT COUNT = ")
-            || text.contains("SKIPSECTORS = ")
-            || text.contains("RHLISOSTATUS="),
-    )
+    Ok(text.contains("ISO MD5SUM = ")
+        || text.contains("FRAGMENT SUMS = ")
+        || text.contains("FRAGMENT COUNT = ")
+        || text.contains("SKIPSECTORS = ")
+        || text.contains("RHLISOSTATUS="))
 }
 
 #[allow(dead_code)]

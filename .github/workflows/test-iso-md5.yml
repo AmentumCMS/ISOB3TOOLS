@@ -50,12 +50,14 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release --bin blake3iso --target x86_64-unknown-linux-gnu
+          cargo build --release --bin isoenc --target x86_64-unknown-linux-gnu
           cargo build --release --bin ISOB3GUI --target x86_64-unknown-linux-gnu
 
       - name: Verify built Linux binaries exist
         run: |
           set -euo pipefail
           test -f target/x86_64-unknown-linux-gnu/release/blake3iso
+          test -f target/x86_64-unknown-linux-gnu/release/isoenc
           test -f target/x86_64-unknown-linux-gnu/release/ISOB3GUI
 
       - name: Collect Linux binaries
@@ -66,6 +68,8 @@ jobs:
 
           cp target/x86_64-unknown-linux-gnu/release/blake3iso \
             artifacts/linux/blake3iso-linux-x86_64-gnu
+          cp target/x86_64-unknown-linux-gnu/release/isoenc \
+            artifacts/linux/isoenc-linux-x86_64-gnu
           cp target/x86_64-unknown-linux-gnu/release/ISOB3GUI \
             artifacts/linux/ISOB3GUI-linux-x86_64-gnu
 
@@ -152,6 +156,11 @@ jobs:
 
           echo "hello from github actions" > test-iso-root/README.txt
           echo "commit: $GITHUB_SHA" > test-iso-root/BUILD.txt
+          mkdir -p test-iso-root/verification
+          (
+            cd test-iso-root
+            sha256sum README.txt BUILD.txt > verification/SHA256SUMS
+          )
 
       - name: Create base ISO
         run: |
@@ -186,6 +195,7 @@ jobs:
           dnf -y update
           dnf -y install \
             file \
+            xorriso \
             which
 
       - name: Verify glibc version
@@ -212,7 +222,9 @@ jobs:
           set -euo pipefail
           mkdir -p testbin out
           cp downloaded/linux/blake3iso-linux-x86_64-gnu testbin/blake3iso
+          cp downloaded/linux/isoenc-linux-x86_64-gnu testbin/isoenc
           chmod +x testbin/blake3iso
+          chmod +x testbin/isoenc
           cp downloaded/test-iso/test.iso out/test.iso
 
       - name: Show base ISO info
@@ -287,6 +299,118 @@ jobs:
             echo "Check after removal correctly failed."
             cat out/isob3-check-after-remove.txt
           fi
+
+      - name: Create plaintext sample for encryption tests
+        run: |
+          set -euo pipefail
+          printf 'hello from encrypted test\n' > out/plain.txt
+
+      - name: Encrypt sample with DBENC003 default
+        run: |
+          set -euo pipefail
+          testbin/blake3iso encrypt out/plain.txt --password secret | tee out/dbenc003-encrypt.txt
+          test -f out/plain.txt.dbenc
+          test -f out/plain.txt.dbenc.isob3enc.json
+
+      - name: Check DBENC003 ciphertext sidecar
+        run: |
+          set -euo pipefail
+          testbin/blake3iso check out/plain.txt.dbenc | tee out/dbenc003-check.txt
+
+      - name: Decrypt DBENC003 file and compare plaintext
+        run: |
+          set -euo pipefail
+          testbin/blake3iso decrypt out/plain.txt.dbenc --password secret --output out/plain-dbenc003.txt | tee out/dbenc003-decrypt.txt
+          cmp out/plain.txt out/plain-dbenc003.txt
+
+      - name: Encrypt sample with DBENC002 AES-GCM
+        run: |
+          set -euo pipefail
+          testbin/blake3iso encrypt out/plain.txt --password secret --format aes-gcm --output out/plain-aesgcm.dbenc | tee out/dbenc002-encrypt.txt
+          test -f out/plain-aesgcm.dbenc
+          test -f out/plain-aesgcm.dbenc.isob3enc.json
+
+      - name: Check DBENC002 ciphertext sidecar
+        run: |
+          set -euo pipefail
+          testbin/blake3iso check out/plain-aesgcm.dbenc | tee out/dbenc002-check.txt
+
+      - name: Decrypt DBENC002 file and compare plaintext
+        run: |
+          set -euo pipefail
+          testbin/blake3iso decrypt out/plain-aesgcm.dbenc --password secret --output out/plain-dbenc002.txt | tee out/dbenc002-decrypt.txt
+          cmp out/plain.txt out/plain-dbenc002.txt
+
+      - name: Reject wrong password for encrypted file
+        shell: bash
+        run: |
+          set -euo pipefail
+          if testbin/blake3iso decrypt out/plain.txt.dbenc --password wrong --output out/should-not-exist.txt > out/dbenc-wrong-password.txt 2>&1; then
+            echo "Expected decrypt with wrong password to fail, but it passed."
+            cat out/dbenc-wrong-password.txt
+            exit 1
+          else
+            echo "Wrong-password decrypt correctly failed."
+            cat out/dbenc-wrong-password.txt
+          fi
+
+      - name: Build encrypted ISO from input ISO
+        run: |
+          set -euo pipefail
+          testbin/isoenc bundle out/test.iso \
+            --output out/test-encrypted.iso \
+            --password secret \
+            --exclude ./verification/ \
+            --implant-isob3 | tee out/isoenc-bundle.txt
+
+      - name: Check rebuilt encrypted ISO ISOB3
+        run: |
+          set -euo pipefail
+          testbin/blake3iso check out/test-encrypted.iso | tee out/isoenc-check-isob3.txt
+
+      - name: Extract rebuilt encrypted ISO
+        run: |
+          set -euo pipefail
+          rm -rf out/extracted-encrypted
+          mkdir -p out/extracted-encrypted
+          xorriso -osirrox on -indev out/test-encrypted.iso -extract / out/extracted-encrypted
+
+      - name: Confirm payload files were encrypted in place
+        run: |
+          set -euo pipefail
+          test -f out/extracted-encrypted/README.txt
+          test -f out/extracted-encrypted/BUILD.txt
+          test -f out/extracted-encrypted/verification/SHA256SUMS
+          test "$(head -c 8 out/extracted-encrypted/README.txt)" = "DBENC003"
+          test "$(head -c 8 out/extracted-encrypted/BUILD.txt)" = "DBENC003"
+          if test "$(head -c 8 out/extracted-encrypted/verification/SHA256SUMS)" = "DBENC003"; then
+            echo "Manifest file should not have been encrypted."
+            exit 1
+          fi
+
+      - name: Decrypt encrypted ISO payload files and compare plaintext
+        run: |
+          set -euo pipefail
+          testbin/blake3iso decrypt out/extracted-encrypted/README.txt --password secret --output out/README.dec.txt | tee out/isoenc-readme-decrypt.txt
+          testbin/blake3iso decrypt out/extracted-encrypted/BUILD.txt --password secret --output out/BUILD.dec.txt | tee out/isoenc-build-decrypt.txt
+          printf 'hello from github actions\n' > out/README.expected.txt
+          printf 'commit: %s\n' "$GITHUB_SHA" > out/BUILD.expected.txt
+          cmp out/README.dec.txt out/README.expected.txt
+          cmp out/BUILD.dec.txt out/BUILD.expected.txt
+
+      - name: Confirm decrypted payload hashes still match manifest
+        run: |
+          set -euo pipefail
+          (
+            cd out
+            sha256sum README.dec.txt BUILD.dec.txt > decrypted.hashes
+          )
+          manifest_readme="$(awk '/README.txt$/ { print $1 }' out/extracted-encrypted/verification/SHA256SUMS)"
+          manifest_build="$(awk '/BUILD.txt$/ { print $1 }' out/extracted-encrypted/verification/SHA256SUMS)"
+          actual_readme="$(awk '/README.dec.txt$/ { print $1 }' out/decrypted.hashes)"
+          actual_build="$(awk '/BUILD.dec.txt$/ { print $1 }' out/decrypted.hashes)"
+          test "$manifest_readme" = "$actual_readme"
+          test "$manifest_build" = "$actual_build"
 
       - name: Upload Linux test outputs
         uses: actions/upload-artifact@v4

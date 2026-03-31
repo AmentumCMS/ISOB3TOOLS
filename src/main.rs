@@ -2,8 +2,12 @@
 
 mod app;
 mod blake3iso_core;
+mod dbenc;
+mod encfile;
+#[allow(dead_code)]
 mod isomd5;
 mod media;
+mod sha256sum;
 mod worker;
 
 use eframe::egui;
@@ -16,7 +20,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "ISOB3 Media Verifier",
+        "Drive Integrity Verifier",
         options,
         Box::new(|_cc| Ok(Box::new(app::App::new()))),
     )

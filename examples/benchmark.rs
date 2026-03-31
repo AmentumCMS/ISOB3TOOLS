@@ -9,18 +9,18 @@ use clap::Parser;
 use md5::{Digest, Md5};
 
 const CHUNK_SIZES: [usize; 1] = [
-    1 * 1024 * 1024,       // 1 MiB
-    // 2 * 1024 * 1024,       // 2 MiB
-    // 3 * 1024 * 1024,       // 3 MiB
-    // 4 * 1024 * 1024,       // 4 MiB
-    // 8 * 1024 * 1024,       // 8 MiB
-    // 16 * 1024 * 1024,      // 16 MiB
-    // 32 * 1024 * 1024,      // 32 MiB
-    // 64 * 1024 * 1024,      // 64 MiB
-    // 128 * 1024 * 1024,     // 128 MiB
-    // 256 * 1024 * 1024,     // 256 MiB
-    // 512 * 1024 * 1024,     // 512 MiB
-    // 1024 * 1024 * 1024,    // 1 GiB
+    1 * 1024 * 1024, // 1 MiB
+                     // 2 * 1024 * 1024,       // 2 MiB
+                     // 3 * 1024 * 1024,       // 3 MiB
+                     // 4 * 1024 * 1024,       // 4 MiB
+                     // 8 * 1024 * 1024,       // 8 MiB
+                     // 16 * 1024 * 1024,      // 16 MiB
+                     // 32 * 1024 * 1024,      // 32 MiB
+                     // 64 * 1024 * 1024,      // 64 MiB
+                     // 128 * 1024 * 1024,     // 128 MiB
+                     // 256 * 1024 * 1024,     // 256 MiB
+                     // 512 * 1024 * 1024,     // 512 MiB
+                     // 1024 * 1024 * 1024,    // 1 GiB
 ];
 
 #[derive(Parser, Debug)]
@@ -54,7 +54,11 @@ fn human_bytes(num_bytes: usize) -> String {
     format!("{num_bytes} B")
 }
 
-fn benchmark_md5(file_path: &PathBuf, chunk_size: usize, rounds: usize) -> anyhow::Result<ResultRow> {
+fn benchmark_md5(
+    file_path: &PathBuf,
+    chunk_size: usize,
+    rounds: usize,
+) -> anyhow::Result<ResultRow> {
     let file_size = std::fs::metadata(file_path)?.len() as f64;
     let mut best_time = f64::INFINITY;
     let mut best_digest = String::new();
@@ -91,7 +95,11 @@ fn benchmark_md5(file_path: &PathBuf, chunk_size: usize, rounds: usize) -> anyho
     })
 }
 
-fn benchmark_blake3(file_path: &PathBuf, chunk_size: usize, rounds: usize) -> anyhow::Result<ResultRow> {
+fn benchmark_blake3(
+    file_path: &PathBuf,
+    chunk_size: usize,
+    rounds: usize,
+) -> anyhow::Result<ResultRow> {
     let file_size = std::fs::metadata(file_path)?.len() as f64;
     let mut best_time = f64::INFINITY;
     let mut best_digest = String::new();
@@ -166,7 +174,10 @@ fn print_mmap_result(label: &str, result: &ResultRow) {
 }
 fn print_algo_results(algo_name: &str, results: &[ResultRow]) {
     println!("{algo_name}:");
-    println!("{:>10}  {:>10}  {:>12}  {:>10}", "Chunk", "Time (s)", "MiB/s", "GiB/s");
+    println!(
+        "{:>10}  {:>10}  {:>12}  {:>10}",
+        "Chunk", "Time (s)", "MiB/s", "GiB/s"
+    );
     println!("{}", "-".repeat(50));
 
     for row in results {
@@ -189,7 +200,10 @@ fn print_algo_results(algo_name: &str, results: &[ResultRow]) {
     println!();
     println!("Best chunk size : {}", human_bytes(best.chunk_size));
     println!("Best time       : {:.4} s", best.seconds);
-    println!("Best throughput : {:.2} MiB/s", best.bps / (1024.0 * 1024.0));
+    println!(
+        "Best throughput : {:.2} MiB/s",
+        best.bps / (1024.0 * 1024.0)
+    );
     println!("Digest          : {}", best.digest);
     println!();
 }
@@ -262,7 +276,10 @@ fn main() -> anyhow::Result<()> {
         best_blake3.bps / (1024.0 * 1024.0)
     );
     println!("  Winner      : {winner}");
-    println!("  Speedup     : {:.2}x (MD5 best time / BLAKE3 best time)", speedup);
+    println!(
+        "  Speedup     : {:.2}x (MD5 best time / BLAKE3 best time)",
+        speedup
+    );
 
     Ok(())
 }
