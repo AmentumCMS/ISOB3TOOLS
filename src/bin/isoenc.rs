@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Component, Path, PathBuf};

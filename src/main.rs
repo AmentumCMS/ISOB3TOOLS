@@ -1,16 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-mod app;
-mod blake3iso_core;
-mod dbenc;
-mod encfile;
-#[allow(dead_code)]
-mod isomd5;
-mod media;
-mod sha256sum;
-mod worker;
-
 use eframe::egui;
+use isob3_tools::app;
 
 fn main() -> eframe::Result<()> {
     // Start the desktop UI with a roomy default size for the result grid and log pane.

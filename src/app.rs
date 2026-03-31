@@ -356,7 +356,8 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         if ctx.input(|i| i.viewport().close_requested()) && self.verifying {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.abort_confirm_open = true;
@@ -369,7 +370,7 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
 
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+        egui::TopBottomPanel::top("top_panel").show(&ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
@@ -445,7 +446,7 @@ impl eframe::App for App {
             ui.label(self.progress_text());
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(&ctx, |ui| {
             ui.heading("Drive Selection");
             ui.separator();
 
@@ -585,7 +586,7 @@ impl eframe::App for App {
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.heading("Drive Integrity Verifier");
                     ui.separator();
                     ui.label("A desktop tool for scanning drives, discovering SHA-256 manifests, validating referenced files, and checking embedded ISOB3 metadata on ISO media.");
@@ -602,7 +603,7 @@ impl eframe::App for App {
                 .open(&mut is_open)
                 .resizable(true)
                 .default_size([980.0, 420.0])
-                .show(ctx, |ui| {
+                .show(&ctx, |ui| {
                     let Some(drive_name) = self.drive_details_target.as_deref() else {
                         ui.label("No drive selected.");
                         return;
@@ -669,7 +670,7 @@ impl eframe::App for App {
                 .collapsible(false)
                 .resizable(false)
                 .default_width(420.0)
-                .show(ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.label(
                         "Enter the shared password used for DBENC001 AES-256 encrypted files.",
                     );
@@ -699,7 +700,7 @@ impl eframe::App for App {
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.label("Verification is still running.");
                     ui.label("Abort verification and close the application?");
                     ui.add_space(8.0);

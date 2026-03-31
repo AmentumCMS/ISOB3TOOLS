@@ -195,7 +195,6 @@ jobs:
           dnf -y update
           dnf -y install \
             file \
-            xorriso \
             which
 
       - name: Verify glibc version
@@ -222,9 +221,7 @@ jobs:
           set -euo pipefail
           mkdir -p testbin out
           cp downloaded/linux/blake3iso-linux-x86_64-gnu testbin/blake3iso
-          cp downloaded/linux/isoenc-linux-x86_64-gnu testbin/isoenc
           chmod +x testbin/blake3iso
-          chmod +x testbin/isoenc
           cp downloaded/test-iso/test.iso out/test.iso
 
       - name: Show base ISO info
@@ -354,6 +351,46 @@ jobs:
             cat out/dbenc-wrong-password.txt
           fi
 
+      - name: Upload Linux test outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-outputs-linux-gnu
+          path: out/
+
+  test-linux-isoenc:
+    name: Test isoenc on Ubuntu
+    runs-on: ubuntu-latest
+    needs: [build-linux-ubi, make-test-iso]
+
+    steps:
+      - name: Install xorriso
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xorriso
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: built-binaries-linux
+          path: downloaded/linux
+
+      - name: Download test ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: test-iso
+          path: downloaded/test-iso
+
+      - name: Prepare test binaries
+        run: |
+          set -euo pipefail
+          mkdir -p testbin out
+          cp downloaded/linux/blake3iso-linux-x86_64-gnu testbin/blake3iso
+          cp downloaded/linux/isoenc-linux-x86_64-gnu testbin/isoenc
+          chmod +x testbin/blake3iso
+          chmod +x testbin/isoenc
+          cp downloaded/test-iso/test.iso out/test.iso
+
       - name: Build encrypted ISO from input ISO
         run: |
           set -euo pipefail
@@ -412,16 +449,16 @@ jobs:
           test "$manifest_readme" = "$actual_readme"
           test "$manifest_build" = "$actual_build"
 
-      - name: Upload Linux test outputs
+      - name: Upload isoenc test outputs
         uses: actions/upload-artifact@v4
         with:
-          name: test-outputs-linux-gnu
+          name: test-outputs-linux-isoenc
           path: out/
 
   package:
     name: Package release artifacts
     runs-on: ubuntu-latest
-    needs: [build-linux-ubi, test-linux-ubi, build-windows]
+    needs: [build-linux-ubi, test-linux-ubi, test-linux-isoenc, build-windows]
 
     steps:
       - name: Download Linux binaries
@@ -490,7 +527,7 @@ jobs:
     name: Create GitHub release
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: [build-linux-ubi, test-linux-ubi, build-windows, package]
+    needs: [build-linux-ubi, test-linux-ubi, test-linux-isoenc, build-windows, package]
 
     steps:
       - name: Download packaged artifacts
