@@ -370,6 +370,8 @@ For raw-device verification on Linux, the GUI uses device paths such as `/dev/sr
 ```text
 .
 |-- Cargo.toml
+|-- fixtures
+|   `-- manual
 |-- src
 |   |-- app.rs
 |   |-- blake3iso_core.rs
@@ -384,6 +386,14 @@ For raw-device verification on Linux, the GUI uses device paths such as `/dev/sr
 |   `-- checkisomd5.exe
 `-- .github/workflows
 ```
+
+## Manual Fixtures
+
+Large manual ISO inputs that are useful for local testing, such as `Pipeline-Group.iso`, should live under `fixtures/manual/`.
+
+These files are intentionally not tracked in git.
+
+For GitHub Actions, use the manual workflow in [.github/workflows/large-iso-manual.yml](/C:/Users/wkron/RustroverProjects/blake3benchmark/.github/workflows/large-iso-manual.yml) and provide a download URL for the large ISO instead of committing it to the repository.
 
 ## License
 

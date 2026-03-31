@@ -179,6 +179,12 @@ jobs:
           name: test-iso
           path: out/test.iso
 
+      - name: Upload generated plaintext ISO bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-plain-iso
+          path: out/test.iso
+
   test-linux-ubi:
     name: Test blake3iso on UBI9
     runs-on: ubuntu-latest
@@ -456,6 +462,12 @@ jobs:
         with:
           name: test-outputs-linux-isoenc
           path: out/
+
+      - name: Upload generated encrypted ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-encrypted-iso
+          path: out/test-encrypted.iso
 
   package:
     name: Package release artifacts
