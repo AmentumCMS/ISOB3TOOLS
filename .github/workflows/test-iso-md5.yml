@@ -27,7 +27,7 @@ jobs:
           set -euo pipefail
           dnf -y update
           dnf -y install \
-            coreutils \
+            diffutils \
             file \
             gcc \
             gcc-c++ \
@@ -195,7 +195,7 @@ jobs:
           set -euo pipefail
           dnf -y update
           dnf -y install \
-            coreutils \
+            diffutils \
             file \
             which
 
