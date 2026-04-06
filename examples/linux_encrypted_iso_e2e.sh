@@ -12,8 +12,8 @@ command -v xorriso >/dev/null 2>&1 || {
   exit 1
 }
 
-echo "Building blake3iso and isoenc..."
-cargo build --release --bin blake3iso --bin isoenc
+echo "Building blake3iso, discdecrypt, and isoenc..."
+cargo build --release --bin blake3iso --bin discdecrypt --bin isoenc
 
 echo "Preparing demo source tree..."
 rm -rf "$DEMO_ROOT" "$DEMO_OUT"
@@ -55,6 +55,8 @@ echo
 echo -n "verification/SHA256SUMS header: "
 head -c 8 "$DEMO_OUT/extracted/verification/SHA256SUMS"
 echo
+test -f "$DEMO_OUT/extracted/decryptor/discdecrypt"
+test -f "$DEMO_OUT/extracted/decryptor/decrypt.sh"
 
 echo "Decrypting payload files..."
 ./target/release/blake3iso decrypt \
@@ -66,12 +68,22 @@ echo "Decrypting payload files..."
   --password secret \
   --output "$DEMO_OUT/BUILD.dec.txt"
 
+echo "Running embedded discdecrypt..."
+chmod +x "$DEMO_OUT/extracted/decryptor/discdecrypt"
+"$DEMO_OUT/extracted/decryptor/discdecrypt" \
+  --input "$DEMO_OUT/extracted" \
+  --output "$DEMO_OUT/decrypted-tree" \
+  --password secret
+
 printf 'hello from demo\n' > "$DEMO_OUT/README.expected.txt"
 printf 'build 1\n' > "$DEMO_OUT/BUILD.expected.txt"
 
 echo "Comparing decrypted plaintext with expected content..."
 cmp "$DEMO_OUT/README.dec.txt" "$DEMO_OUT/README.expected.txt"
 cmp "$DEMO_OUT/BUILD.dec.txt" "$DEMO_OUT/BUILD.expected.txt"
+cmp "$DEMO_OUT/decrypted-tree/README.txt" "$DEMO_OUT/README.expected.txt"
+cmp "$DEMO_OUT/decrypted-tree/BUILD.txt" "$DEMO_OUT/BUILD.expected.txt"
+cmp "$DEMO_OUT/decrypted-tree/verification/SHA256SUMS" "$DEMO_OUT/extracted/verification/SHA256SUMS"
 
 echo "Computing hashes for decrypted plaintext..."
 (

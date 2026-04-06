@@ -4,11 +4,11 @@ Rust GUI and CLI tools for ISO integrity verification, embedded `ISOB3` metadata
 
 ## Overview
 
-This project has two main pieces:
+This project has three main pieces:
 
 - `ISOB3GUI`: desktop app for scanning removable media and optical discs
 - `blake3iso`: CLI for implanting, checking, encrypting, and decrypting files
-- `isoenc`: CLI for extracting an input ISO, encrypting payload files in place, and rebuilding a new ISO
+- `isoenc`: CLI for extracting an input ISO, encrypting payload files in place, embedding a decryptor, and rebuilding a new ISO
 
 The integrity model supports:
 
@@ -132,13 +132,13 @@ blake3iso implant payload.iso --encrypted --password secret --format aes-gcm
 Decrypt an encrypted file:
 
 ```bash
-blake3iso decrypt payload.iso.dbenc --password secret --output payload.iso
+blake3iso decrypt payload.iso --password secret --output payload.dec.iso
 ```
 
 Check an encrypted file:
 
 ```bash
-blake3iso check payload.iso.dbenc
+blake3iso check payload.iso
 ```
 
 For encrypted files, `check` validates the ciphertext sidecar. It does not decrypt the file.
@@ -160,8 +160,11 @@ The bundler:
 1. extracts the input ISO into a temporary tree
 2. encrypts regular payload files in place while keeping filenames unchanged
 3. skips SHA-256 manifest files automatically
-4. rebuilds a new ISO from the transformed tree
-5. optionally implants `ISOB3` into the rebuilt output
+4. embeds a `decryptor/` folder with a standalone `discdecrypt` utility
+5. rebuilds a new ISO from the transformed tree
+6. optionally implants `ISOB3` into the rebuilt output
+
+The embedded decryptor detects encrypted files by `DBENC` header, not by filename extension. It copies plaintext files and manifests through unchanged while decrypting payload files into a user-chosen output folder.
 
 Exclude directories with a comma-separated list:
 
@@ -331,6 +334,16 @@ Expected result:
 ```bash
 ./target/release/blake3iso decrypt demo-out/extracted/README.txt --password secret --output demo-out/README.dec.txt
 ./target/release/blake3iso decrypt demo-out/extracted/BUILD.txt --password secret --output demo-out/BUILD.dec.txt
+```
+
+Or use the decryptor that ships inside the rebuilt ISO:
+
+```bash
+chmod +x demo-out/extracted/decryptor/discdecrypt
+demo-out/extracted/decryptor/discdecrypt \
+  --input demo-out/extracted \
+  --output demo-out/decrypted-tree \
+  --password secret
 ```
 
 ### 8. Compare decrypted plaintext to expected content

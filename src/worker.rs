@@ -117,7 +117,7 @@ pub fn verify_drives_worker(
         )))
         .map_err(|e| e.to_string())?;
 
-        let manifests = find_sha256_manifests(&drive.search_root);
+        let manifests = find_sha256_manifests(&drive.search_root, &encryption);
         tx.send(WorkerEvent::Log(format!(
             "Found {} SHA-256 manifest(s) on {}.",
             manifests.len(),
@@ -255,14 +255,32 @@ pub fn verify_drives_worker(
     Ok(())
 }
 
-fn find_sha256_manifests(root: &Path) -> Vec<PathBuf> {
+fn find_sha256_manifests(root: &Path, encryption: &EncryptionSettings) -> Vec<PathBuf> {
     WalkDir::new(root)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| entry.into_path())
-        .filter(|path| is_sha256_manifest(path))
+        .filter(|path| is_sha256_manifest_candidate(path, encryption))
         .collect()
+}
+
+fn is_sha256_manifest_candidate(path: &Path, encryption: &EncryptionSettings) -> bool {
+    if is_sha256_manifest(path) {
+        return true;
+    }
+
+    if !encryption.enabled {
+        return false;
+    }
+
+    let Ok(true) = is_encrypted_file(path) else {
+        return false;
+    };
+
+    encrypted_manifest_probe(path, &encryption.password)
+        .map(|parsed| !parsed.entries.is_empty())
+        .unwrap_or(false)
 }
 
 fn load_manifest_entries(
@@ -286,6 +304,11 @@ fn load_manifest_entries(
     } else {
         parse_sha256_manifest(manifest_path)
     }
+}
+
+fn encrypted_manifest_probe(manifest_path: &Path, password: &str) -> Result<ParsedManifest, String> {
+    let decrypted = decrypt_file(manifest_path, password)?;
+    parse_sha256_manifest_bytes(manifest_path, &decrypted.plaintext)
 }
 
 fn run_job(job: WorkerJob, tx: &Sender<WorkerEvent>, cancel: &Arc<AtomicBool>) -> JobOutcome {
@@ -662,4 +685,62 @@ fn estimate_verification_source_bytes(path: &Path) -> u64 {
 
 fn is_abort_error(err: &str) -> bool {
     err.contains("operation aborted")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dbenc::{DbEncFormat, encrypt_file_to_path};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "worker-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn discovers_encrypted_manifest_without_manifest_filename() {
+        let root = temp_root();
+        fs::create_dir_all(&root).expect("create temp root");
+
+        let plaintext_manifest = root.join("manifest.txt");
+        fs::write(
+            &plaintext_manifest,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef *payload.bin\n",
+        )
+        .expect("write manifest");
+
+        let encrypted_manifest = root.join("catalog.bin");
+        encrypt_file_to_path(
+            &plaintext_manifest,
+            &encrypted_manifest,
+            "secret",
+            DbEncFormat::DbEnc003,
+        )
+        .expect("encrypt manifest");
+        fs::remove_file(&plaintext_manifest).expect("remove plaintext manifest");
+
+        let encryption = EncryptionSettings {
+            enabled: true,
+            password: "secret".to_string(),
+        };
+        let manifests = find_sha256_manifests(&root, &encryption);
+
+        assert_eq!(manifests, vec![encrypted_manifest.clone()]);
+
+        let parsed = encrypted_manifest_probe(&encrypted_manifest, &encryption.password)
+            .expect("parse encrypted manifest");
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.entries[0].target_display, "payload.bin");
+
+        let _ = fs::remove_file(&encrypted_manifest);
+        let _ = fs::remove_dir(&root);
+    }
 }

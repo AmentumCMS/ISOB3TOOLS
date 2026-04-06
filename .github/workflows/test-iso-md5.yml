@@ -51,6 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release --bin blake3iso --target x86_64-unknown-linux-gnu
+          cargo build --release --bin discdecrypt --target x86_64-unknown-linux-gnu
           cargo build --release --bin isoenc --target x86_64-unknown-linux-gnu
           cargo build --release --bin ISOB3GUI --target x86_64-unknown-linux-gnu
 
@@ -58,6 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f target/x86_64-unknown-linux-gnu/release/blake3iso
+          test -f target/x86_64-unknown-linux-gnu/release/discdecrypt
           test -f target/x86_64-unknown-linux-gnu/release/isoenc
           test -f target/x86_64-unknown-linux-gnu/release/ISOB3GUI
 
@@ -69,6 +71,8 @@ jobs:
 
           cp target/x86_64-unknown-linux-gnu/release/blake3iso \
             artifacts/linux/blake3iso-linux-x86_64-gnu
+          cp target/x86_64-unknown-linux-gnu/release/discdecrypt \
+            artifacts/linux/discdecrypt-linux-x86_64-gnu
           cp target/x86_64-unknown-linux-gnu/release/isoenc \
             artifacts/linux/isoenc-linux-x86_64-gnu
           cp target/x86_64-unknown-linux-gnu/release/ISOB3GUI \
@@ -208,7 +212,7 @@ jobs:
       - name: Verify glibc version
         run: |
           set -euo pipefail
-          GLIBC_VERSION="$(ldd --version | head -n1 | grep -oE '[0-9]+\.[0-9]+')"
+          GLIBC_VERSION="$(ldd --version | sed -n '1s/.* //p')"
           echo "Detected glibc version: $GLIBC_VERSION"
           test "$GLIBC_VERSION" = "2.34"
 
@@ -394,8 +398,10 @@ jobs:
           set -euo pipefail
           mkdir -p testbin out
           cp downloaded/linux/blake3iso-linux-x86_64-gnu testbin/blake3iso
+          cp downloaded/linux/discdecrypt-linux-x86_64-gnu testbin/discdecrypt
           cp downloaded/linux/isoenc-linux-x86_64-gnu testbin/isoenc
           chmod +x testbin/blake3iso
+          chmod +x testbin/discdecrypt
           chmod +x testbin/isoenc
           cp downloaded/test-iso/test.iso out/test.iso
 
@@ -426,12 +432,30 @@ jobs:
           test -f out/extracted-encrypted/README.txt
           test -f out/extracted-encrypted/BUILD.txt
           test -f out/extracted-encrypted/verification/SHA256SUMS
+          test -f out/extracted-encrypted/decryptor/discdecrypt
+          test -f out/extracted-encrypted/decryptor/decrypt.sh
           test "$(head -c 8 out/extracted-encrypted/README.txt)" = "DBENC003"
           test "$(head -c 8 out/extracted-encrypted/BUILD.txt)" = "DBENC003"
           if test "$(head -c 8 out/extracted-encrypted/verification/SHA256SUMS)" = "DBENC003"; then
             echo "Manifest file should not have been encrypted."
             exit 1
           fi
+          if test "$(head -c 8 out/extracted-encrypted/decryptor/discdecrypt)" = "DBENC003"; then
+            echo "Embedded decryptor should not have been encrypted."
+            exit 1
+          fi
+
+      - name: Run embedded decryptor against extracted disc contents
+        run: |
+          set -euo pipefail
+          chmod +x out/extracted-encrypted/decryptor/discdecrypt
+          out/extracted-encrypted/decryptor/discdecrypt \
+            --input out/extracted-encrypted \
+            --output out/decrypted-tree \
+            --password secret | tee out/discdecrypt.txt
+          test -f out/decrypted-tree/README.txt
+          test -f out/decrypted-tree/BUILD.txt
+          test -f out/decrypted-tree/verification/SHA256SUMS
 
       - name: Decrypt encrypted ISO payload files and compare plaintext
         run: |
@@ -442,6 +466,9 @@ jobs:
           printf 'commit: %s\n' "$GITHUB_SHA" > out/BUILD.expected.txt
           cmp out/README.dec.txt out/README.expected.txt
           cmp out/BUILD.dec.txt out/BUILD.expected.txt
+          cmp out/decrypted-tree/README.txt out/README.expected.txt
+          cmp out/decrypted-tree/BUILD.txt out/BUILD.expected.txt
+          cmp out/decrypted-tree/verification/SHA256SUMS out/extracted-encrypted/verification/SHA256SUMS
 
       - name: Confirm decrypted payload hashes still match manifest
         run: |

@@ -140,6 +140,7 @@ fn run_bundle(options: &BundleOptions) -> Result<String, String> {
             options.format,
             &options.exclude_dirs,
         )?;
+        inject_decryptor(&extract_dir)?;
         rebuild_iso(&backend, &extract_dir, &options.output)?;
         if options.implant_isob3 {
             implant_iso(&options.output, true)?;
@@ -353,8 +354,107 @@ fn encrypt_tree_in_place(
     Ok(encrypted_files)
 }
 
+fn inject_decryptor(root: &Path) -> Result<(), String> {
+    let current_exe = std::env::current_exe().map_err(|e| format!("current_exe failed: {e}"))?;
+    let exe_dir = current_exe
+        .parent()
+        .ok_or_else(|| "failed to resolve isoenc executable directory".to_string())?;
+    let decryptor_path = resolve_decryptor_binary(&current_exe, exe_dir)?;
+
+    let target_dir = root.join("decryptor");
+    fs::create_dir_all(&target_dir).map_err(|e| {
+        format!(
+            "create decryptor directory failed for {}: {e}",
+            target_dir.display()
+        )
+    })?;
+    fs::copy(&decryptor_path, target_dir.join("discdecrypt")).map_err(|e| {
+        format!(
+            "copy decryptor failed from {}: {e}",
+            decryptor_path.display()
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(
+            target_dir.join("discdecrypt"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .map_err(|e| format!("set discdecrypt permissions failed: {e}"))?;
+    }
+    fs::write(
+        target_dir.join("README.txt"),
+        "Run ./discdecrypt --input .. --output <folder>\nIf --password is omitted, the tool will prompt for it.\nEncrypted files are detected by DBENC header, not by file extension.\nPlaintext files and manifests are copied through unchanged.\n",
+    )
+    .map_err(|e| format!("write decryptor README failed: {e}"))?;
+    fs::write(
+        target_dir.join("decrypt.sh"),
+        "#!/usr/bin/env sh\nset -eu\nDIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\"\nexec \"$DIR/discdecrypt\" --input \"$DIR/..\" \"$@\"\n",
+    )
+    .map_err(|e| format!("write decrypt.sh failed: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(
+            target_dir.join("decrypt.sh"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .map_err(|e| format!("set decrypt.sh permissions failed: {e}"))?;
+    }
+    Ok(())
+}
+
+fn resolve_decryptor_binary(current_exe: &Path, exe_dir: &Path) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    candidates.push(exe_dir.join("discdecrypt"));
+    if let Some(name) = current_exe.file_name().and_then(|value| value.to_str()) {
+        candidates.push(exe_dir.join(name.replacen("isoenc", "discdecrypt", 1)));
+    }
+
+    if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
+        return Ok(path);
+    }
+
+    let discovered = fs::read_dir(exe_dir)
+        .map_err(|e| {
+            format!(
+                "failed to inspect executable directory {}: {e}",
+                exe_dir.display()
+            )
+        })?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| value.starts_with("discdecrypt"))
+                .unwrap_or(false)
+                && path.is_file()
+        });
+    if let Some(path) = discovered {
+        return Ok(path);
+    }
+
+    Err(format!(
+        "discdecrypt binary not found next to isoenc in {}",
+        exe_dir.display()
+    ))
+}
+
 fn should_skip(relative: &Path, full_path: &Path, exclude_dirs: &[PathBuf]) -> bool {
     if is_sha256_manifest(full_path) {
+        return true;
+    }
+
+    if relative
+        .components()
+        .next()
+        .and_then(|component| component.as_os_str().to_str())
+        == Some("decryptor")
+    {
         return true;
     }
 
