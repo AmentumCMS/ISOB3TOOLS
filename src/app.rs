@@ -662,15 +662,64 @@ impl eframe::App for App {
         });
 
         if self.show_about {
-            egui::Window::new("About Drive Integrity Verifier")
+            egui::Window::new("About ISOB3 Media Verifier")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(&ctx, |ui| {
-                    ui.heading("Drive Integrity Verifier");
+                    ui.heading("ISOB3 Media Verifier");
                     ui.separator();
-                    ui.label("A desktop tool for scanning drives, discovering SHA-256 manifests, validating referenced files, and checking embedded ISOB3 metadata on ISO media.");
+
+                    ui.label("A desktop tool for verifying ISO media using embedded ISOB3 (BLAKE3) metadata, with SHA-256 manifest validation and ISOMD5 fallback support.");
+
+                    ui.add_space(8.0);
+
+                    ui.label("Features:");
+                    ui.label("Verifies raw optical media and discovered ISO files");
+                    ui.label("Validates SHA-256 manifests found on selected drives");
+                    ui.label("Supports ISOB3 metadata in the ISO9660 application area");
+                    ui.label("Falls back to ISOMD5 when ISOB3 metadata is not present");
+                    ui.label("Runs verification across drives with one active worker per drive");
+
+                    ui.add_space(10.0);
+                    ui.separator();
+
+                    ui.heading("Credits");
+
+                    ui.add_space(6.0);
+
+                    ui.label("ISOMD5 concept & tooling:");
+                    ui.horizontal(|ui| {
+                        ui.label("Inspiration from isomd5sum");
+                        ui.hyperlink_to("GitHub", "https://github.com/rhinstaller/isomd5sum");
+                    });
+
+                    ui.add_space(4.0);
+
+                    ui.label("Windows port of isomd5sum:");
+                    ui.horizontal(|ui| {
+                        ui.label("John Pappas");
+                        ui.hyperlink_to("GitHub", "https://github.com/thepappas");
+                    });
+
+                    ui.add_space(4.0);
+
+                    ui.label("Hashing algorithm:");
+                    ui.horizontal(|ui| {
+                        ui.label("BLAKE3");
+                        ui.hyperlink_to("Project", "https://github.com/BLAKE3-team/BLAKE3");
+                    });
+
+                    ui.add_space(10.0);
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label("Created by William Kronfeld");
+                        ui.hyperlink_to("LinkedIn", "https://www.linkedin.com/in/william-kronfeld/");
+                    });
+
                     ui.add_space(12.0);
+
                     if ui.button("Close").clicked() {
                         self.show_about = false;
                     }
@@ -827,3 +876,4 @@ fn human_bytes(num_bytes: u64) -> String {
 
     format!("{num_bytes} B")
 }
+
