@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Instant;
 
@@ -71,6 +71,12 @@ enum WorkerJob {
     },
 }
 
+#[derive(Debug, Clone)]
+struct DriveJobs {
+    sha_jobs: Vec<WorkerJob>,
+    embedded_jobs: Vec<WorkerJob>,
+}
+
 struct VerificationInput {
     actual_sha256: String,
     decrypted_path: Option<PathBuf>,
@@ -102,10 +108,13 @@ pub fn verify_drives_worker(
     encryption: EncryptionSettings,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let mut jobs = Vec::new();
+    let mut drive_jobs = Vec::new();
     let mut totals = PlanningTotals::default();
 
     for drive in selected_drives {
+        let mut sha_jobs = Vec::new();
+        let mut embedded_jobs = Vec::new();
+
         if cancel.load(Ordering::Relaxed) {
             let _ = tx.send(WorkerEvent::Aborted);
             return Ok(());
@@ -158,7 +167,7 @@ pub fn verify_drives_worker(
                                     &encryption,
                                 ));
 
-                        jobs.push(WorkerJob::VerifyManifestEntry {
+                        sha_jobs.push(WorkerJob::VerifyManifestEntry {
                             media: drive.clone(),
                             manifest_path: entry.manifest_path,
                             target_path: entry.target_path,
@@ -189,9 +198,16 @@ pub fn verify_drives_worker(
                 .embedded_bytes
                 .saturating_add(estimated_embedded_bytes(target_path));
 
-            jobs.push(WorkerJob::VerifyEmbeddedDrive {
+            embedded_jobs.push(WorkerJob::VerifyEmbeddedDrive {
                 media: drive.clone(),
                 target_path: target_path.clone(),
+            });
+        }
+
+        if !sha_jobs.is_empty() || !embedded_jobs.is_empty() {
+            drive_jobs.push(DriveJobs {
+                sha_jobs,
+                embedded_jobs,
             });
         }
     }
@@ -200,56 +216,119 @@ pub fn verify_drives_worker(
         .manifest_bytes
         .saturating_add(totals.target_bytes)
         .saturating_add(totals.embedded_bytes);
-    let workers = max_workers.min(jobs.len().max(1));
     tx.send(WorkerEvent::Log(format!(
         "Planned bytes | manifests: {} | sha targets: {} | embedded ISOB3: {} | total: {}",
         totals.manifest_bytes, totals.target_bytes, totals.embedded_bytes, total_bytes
     )))
     .map_err(|e| e.to_string())?;
+    let total_jobs: usize = drive_jobs
+        .iter()
+        .map(|batch| batch.sha_jobs.len() + batch.embedded_jobs.len())
+        .sum();
     tx.send(WorkerEvent::JobsReady {
-        count: jobs.len(),
-        workers,
+        count: total_jobs,
+        workers: max_workers.min(drive_jobs.len().max(1)),
         total_bytes,
     })
     .map_err(|e| e.to_string())?;
 
-    if jobs.is_empty() {
+    if drive_jobs.is_empty() {
         return Ok(());
     }
 
-    let (job_tx, job_rx) = unbounded();
+    run_drive_phase(
+        &tx,
+        &cancel,
+        max_workers,
+        drive_jobs
+            .iter()
+            .filter(|batch| !batch.sha_jobs.is_empty())
+            .map(|batch| batch.sha_jobs.clone())
+            .collect(),
+    )?;
+
+    if cancel.load(Ordering::Relaxed) {
+        let _ = tx.send(WorkerEvent::Aborted);
+        return Ok(());
+    }
+
+    run_drive_phase(
+        &tx,
+        &cancel,
+        max_workers,
+        drive_jobs
+            .into_iter()
+            .filter(|batch| !batch.embedded_jobs.is_empty())
+            .map(|batch| batch.embedded_jobs)
+            .collect(),
+    )?;
+
+    Ok(())
+}
+
+fn run_drive_phase(
+    tx: &Sender<WorkerEvent>,
+    cancel: &Arc<AtomicBool>,
+    max_workers: usize,
+    drive_batches: Vec<Vec<WorkerJob>>,
+) -> Result<(), String> {
+    if drive_batches.is_empty() {
+        return Ok(());
+    }
+
+    let workers = max_workers.min(drive_batches.len().max(1));
+    let (job_tx, job_rx) = unbounded::<Vec<WorkerJob>>();
+    let (done_tx, done_rx) = mpsc::channel();
 
     for _ in 0..workers {
         let rx = job_rx.clone();
         let tx_clone = tx.clone();
         let cancel_clone = cancel.clone();
+        let done_tx_clone = done_tx.clone();
 
         thread::spawn(move || {
-            while let Ok(job) = rx.recv() {
+            while let Ok(drive_batch) = rx.recv() {
                 if cancel_clone.load(Ordering::Relaxed) {
                     let _ = tx_clone.send(WorkerEvent::Aborted);
                     break;
                 }
 
-                match run_job(job, &tx_clone, &cancel_clone) {
-                    JobOutcome::Completed(result) => {
-                        let _ = tx_clone.send(WorkerEvent::VerificationResult(result));
-                    }
-                    JobOutcome::Aborted => {
+                for job in drive_batch {
+                    if cancel_clone.load(Ordering::Relaxed) {
                         let _ = tx_clone.send(WorkerEvent::Aborted);
-                        break;
+                        return;
+                    }
+
+                    match run_job(job, &tx_clone, &cancel_clone) {
+                        JobOutcome::Completed(result) => {
+                            let _ = tx_clone.send(WorkerEvent::VerificationResult(result));
+                        }
+                        JobOutcome::Aborted => {
+                            let _ = tx_clone.send(WorkerEvent::Aborted);
+                            return;
+                        }
                     }
                 }
             }
+
+            let _ = done_tx_clone.send(());
         });
     }
 
-    for job in jobs {
+    drop(done_tx);
+
+    for drive_batch in drive_batches {
         if cancel.load(Ordering::Relaxed) {
             let _ = tx.send(WorkerEvent::Aborted);
             return Ok(());
         }
-        job_tx.send(job).map_err(|e| e.to_string())?;
+        job_tx.send(drive_batch).map_err(|e| e.to_string())?;
+    }
+
+    drop(job_tx);
+
+    for _ in 0..workers {
+        done_rx.recv().map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -447,7 +526,11 @@ fn verify_manifest_entry(
             subject: target_display.to_string(),
             source: manifest_path.display().to_string(),
             ok: true,
-            detail: format!("SHA-256 valid\n{detail}"),
+            detail: if detail.is_empty() {
+                "SHA-256 valid".to_string()
+            } else {
+                "SHA-256 valid".to_string()
+            },
             elapsed_secs,
             processed_bytes: verification_input.processed_bytes,
         },

@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
+use std::time::{Duration, Instant};
 use std::{collections::HashMap, iter};
 
 use eframe::egui;
@@ -47,6 +48,8 @@ pub struct App {
     abort_requested: Arc<AtomicBool>,
     abort_confirm_open: bool,
     close_after_abort: bool,
+    verification_started_at: Option<Instant>,
+    verification_finished_at: Option<Instant>,
 }
 
 impl App {
@@ -78,7 +81,15 @@ impl App {
             abort_requested: Arc::new(AtomicBool::new(false)),
             abort_confirm_open: false,
             close_after_abort: false,
+            verification_started_at: None,
+            verification_finished_at: None,
         }
+    }
+
+    fn reset_event_channel(&mut self) {
+        let (tx, rx) = mpsc::channel();
+        self.tx = tx;
+        self.rx = rx;
     }
 
     fn reset_results(&mut self) {
@@ -92,6 +103,8 @@ impl App {
         self.results.clear();
         self.logs.clear();
         self.abort_requested.store(false, Ordering::Relaxed);
+        self.verification_started_at = None;
+        self.verification_finished_at = None;
     }
 
     fn log_line(&mut self, text: impl Into<String>) {
@@ -180,6 +193,8 @@ impl App {
 
         self.verifying = true;
         self.reset_results();
+        self.verification_started_at = Some(Instant::now());
+        self.verification_finished_at = None;
         self.log_line(format!(
             "Starting verification across {} selected drive(s)...",
             selected.len()
@@ -209,7 +224,11 @@ impl App {
 
         self.abort_requested.store(true, Ordering::Relaxed);
         self.close_after_abort = close_after_abort;
-        self.log_line("Abort requested. Stopping verification...");
+        self.verifying = false;
+        self.effective_workers = 0;
+        self.verification_finished_at = Some(Instant::now());
+        self.reset_event_channel();
+        self.log_line("Verification aborted.");
     }
 
     fn process_events(&mut self) {
@@ -255,6 +274,7 @@ impl App {
 
                     if count == 0 {
                         self.verifying = false;
+                        self.verification_finished_at = Some(Instant::now());
                         self.log_line("No SHA-256 work was found on the selected drives.");
                     }
                 }
@@ -278,57 +298,75 @@ impl App {
 
                     if self.total > 0 && self.done >= self.total {
                         self.verifying = false;
+                        self.verification_finished_at = Some(Instant::now());
                     }
                 }
                 WorkerEvent::Aborted => {
                     self.verifying = false;
+                    self.verification_finished_at = Some(Instant::now());
                     self.log_line("Verification aborted.");
                 }
                 WorkerEvent::Log(line) => self.log_line(line),
                 WorkerEvent::Fatal(err) => {
                     self.discovering = false;
                     self.verifying = false;
+                    self.verification_finished_at = Some(Instant::now());
                     self.log_line(format!("ERROR: {err}"));
                 }
             }
         }
     }
 
+    fn total_elapsed(&self) -> Option<Duration> {
+        let started = self.verification_started_at?;
+        let end = self.verification_finished_at.unwrap_or_else(Instant::now);
+        Some(end.saturating_duration_since(started))
+    }
+
     fn progress_text(&self) -> String {
+        let total_result_secs = self.results.iter().map(|row| row.elapsed_secs).sum::<f64>();
         let avg_secs = if self.done > 0 {
-            self.results.iter().map(|row| row.elapsed_secs).sum::<f64>() / self.done as f64
+            total_result_secs / self.done as f64
         } else {
             0.0
         };
 
-        let throughput = if self.results.is_empty() {
-            0.0
+        let total_elapsed_secs = self
+            .total_elapsed()
+            .map(|elapsed| elapsed.as_secs_f64())
+            .unwrap_or(0.0);
+
+        let live_throughput = if total_elapsed_secs > 0.0 {
+            self.processed_bytes as f64 / total_elapsed_secs
         } else {
-            let total_secs = self.results.iter().map(|row| row.elapsed_secs).sum::<f64>();
-            if total_secs > 0.0 {
-                self.processed_bytes as f64 / total_secs
-            } else {
-                0.0
-            }
+            0.0
+        };
+
+        let completed_throughput = if total_result_secs > 0.0 {
+            self.processed_bytes as f64 / total_result_secs
+        } else {
+            0.0
         };
 
         if self.verifying {
             format!(
-                "{} of {} checks complete | {} of {} est. processed | Avg/check {:.2}s | Throughput {}/s",
+                "{} of {} checks complete | {} of {} est. processed | Total elapsed {:.1}s | Avg/check {:.2}s | Throughput {}/s",
                 self.done,
                 self.total,
                 human_bytes(self.processed_bytes),
                 human_bytes(self.planned_bytes),
+                total_elapsed_secs,
                 avg_secs,
-                human_bytes(throughput as u64)
+                human_bytes(live_throughput as u64)
             )
         } else if self.total > 0 {
             format!(
-                "{} checks complete | {} processed | Avg/check {:.2}s | Throughput {}/s",
+                "{} checks complete | {} processed | Total elapsed {:.1}s | Avg/check {:.2}s | Throughput {}/s",
                 self.done,
                 human_bytes(self.processed_bytes),
+                total_elapsed_secs,
                 avg_secs,
-                human_bytes(throughput as u64)
+                human_bytes(completed_throughput as u64)
             )
         } else {
             "No verification in progress.".to_string()
@@ -353,6 +391,42 @@ impl App {
 
         (passed, failed)
     }
+
+    fn main_result_summary(detail: &str) -> &str {
+        let first_line = detail.lines().next().unwrap_or(detail);
+
+        if first_line.starts_with("SHA-256 valid") {
+            "SHA-256 valid"
+        } else if first_line.starts_with("SHA-256 mismatch") {
+            "SHA-256 mismatch"
+        } else if first_line.starts_with("ISOB3 valid") {
+            "ISOB3 valid"
+        } else if first_line.starts_with("ISOB3 mismatch") {
+            "ISOB3 mismatch"
+        } else {
+            first_line
+        }
+    }
+
+    fn main_result_check_name(check_name: &str) -> Option<&str> {
+        if check_name.contains("ISOMD5") {
+            Some("ISOMD5")
+        } else if check_name.contains("ISOB3") {
+            Some("ISOB3")
+        } else {
+            None
+        }
+    }
+
+    fn main_result_detail(detail: &str) -> &str {
+        for line in detail.lines() {
+            if line.starts_with("ISOB3 ") || line.starts_with("ISOMD5 ") {
+                return Self::main_result_summary(line);
+            }
+        }
+
+        Self::main_result_summary(detail)
+    }
 }
 
 impl eframe::App for App {
@@ -367,10 +441,10 @@ impl eframe::App for App {
         self.process_events();
 
         if self.close_after_abort && !self.verifying {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            std::process::exit(0);
         }
 
-        egui::TopBottomPanel::top("top_panel").show(&ctx, |ui| {
+        egui::Panel::top("top_panel").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
@@ -446,7 +520,7 @@ impl eframe::App for App {
             ui.label(self.progress_text());
         });
 
-        egui::CentralPanel::default().show(&ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.heading("Drive Selection");
             ui.separator();
 
@@ -546,13 +620,19 @@ impl eframe::App for App {
                             ui.strong("Subject");
                             ui.strong("Source");
                             ui.strong("Status");
-                            ui.strong("Time");
-                            ui.strong("Detail");
+                            ui.strong("Check Time");
+                            ui.strong("Summary");
                             ui.end_row();
 
                             for row in &self.results {
+                                let Some(main_check_name) =
+                                    Self::main_result_check_name(&row.check_name)
+                                else {
+                                    continue;
+                                };
+
                                 ui.label(&row.drive_name);
-                                ui.label(&row.check_name);
+                                ui.label(main_check_name);
                                 ui.label(&row.subject);
                                 ui.label(&row.source);
 
@@ -564,7 +644,7 @@ impl eframe::App for App {
                                 ui.colored_label(color, if row.ok { "PASS" } else { "FAIL" });
 
                                 ui.label(format!("{:.2}s", row.elapsed_secs));
-                                ui.label(&row.detail);
+                                ui.label(Self::main_result_detail(&row.detail));
                                 ui.end_row();
                             }
                         });
@@ -633,7 +713,7 @@ impl eframe::App for App {
                                 ui.strong("Source");
                                 ui.strong("Status");
                                 ui.strong("Bytes");
-                                ui.strong("Time");
+                                ui.strong("Check Time");
                                 ui.strong("Detail");
                                 ui.end_row();
 
@@ -695,6 +775,8 @@ impl eframe::App for App {
 
         if self.abort_confirm_open {
             let mut is_open = self.abort_confirm_open;
+            let mut abort_clicked = false;
+            let mut continue_clicked = false;
             egui::Window::new("Abort Verification")
                 .open(&mut is_open)
                 .collapsible(false)
@@ -706,16 +788,25 @@ impl eframe::App for App {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui.button("Abort").clicked() {
-                            let close_after_abort = self.close_after_abort;
-                            self.abort_confirm_open = false;
-                            self.request_abort(close_after_abort);
+                            abort_clicked = true;
                         }
                         if ui.button("Continue").clicked() {
-                            self.abort_confirm_open = false;
-                            self.close_after_abort = false;
+                            continue_clicked = true;
                         }
                     });
                 });
+
+            if abort_clicked {
+                let close_after_abort = self.close_after_abort;
+                is_open = false;
+                self.request_abort(close_after_abort);
+            }
+
+            if continue_clicked {
+                is_open = false;
+                self.close_after_abort = false;
+            }
+
             self.abort_confirm_open = is_open;
         }
 
