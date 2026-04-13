@@ -177,7 +177,7 @@ where
     let mut hasher = Sha256::new();
     let mut file = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags((FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN).0 as u32)
+        .custom_flags((FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN).0)
         .open(path)
         .map_err(|e| format!("uncached open failed: {e}"))?;
     let mut buf = AlignedBuffer::new(UNCACHED_CHUNK_SIZE, UNCACHED_ALIGNMENT)?;

@@ -859,7 +859,7 @@ impl eframe::App for App {
             self.abort_confirm_open = is_open;
         }
 
-        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        ctx.request_repaint_after(Duration::from_millis(100));
     }
 }
 

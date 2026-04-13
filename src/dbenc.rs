@@ -265,7 +265,7 @@ fn encrypt_legacy_file_to_path(
         .write_all(&[0u8; LEGACY_MAC_LEN])
         .map_err(|e| format!("write failed: {e}"))?;
     let ciphertext_bytes = encrypt_legacy_stream_to_writer(&mut source, &mut destination, &parsed)?;
-    let mut hmac = HmacSha256::new_from_slice(&parsed.mac_key)
+    let mut hmac = <HmacSha256 as HmacKeyInit>::new_from_slice(&parsed.mac_key)
         .map_err(|e| format!("hmac init failed: {e}"))?;
     hmac.update(&parsed.header);
     destination
@@ -515,7 +515,7 @@ fn decrypt_legacy_bytes(bytes: &[u8], password: &str) -> Result<DecryptedFile, S
         password,
     )?;
     let cipher_bytes = &bytes[LEGACY_HEADER_LEN + LEGACY_MAC_LEN..];
-    let mut hmac = HmacSha256::new_from_slice(&parsed.mac_key)
+    let mut hmac = <HmacSha256 as HmacKeyInit>::new_from_slice(&parsed.mac_key)
         .map_err(|e| format!("hmac init failed: {e}"))?;
     hmac.update(&parsed.header);
     hmac.update(cipher_bytes);
@@ -541,7 +541,7 @@ where
     let mut file = File::open(path).map_err(|e| format!("open failed: {e}"))?;
     file.seek(SeekFrom::Start((LEGACY_HEADER_LEN + LEGACY_MAC_LEN) as u64))
         .map_err(|e| format!("seek failed: {e}"))?;
-    let mut hmac = HmacSha256::new_from_slice(&parsed.mac_key)
+    let mut hmac = <HmacSha256 as HmacKeyInit>::new_from_slice(&parsed.mac_key)
         .map_err(|e| format!("hmac init failed: {e}"))?;
     hmac.update(&parsed.header);
     let mut total = 0u64;
@@ -904,7 +904,8 @@ fn pbkdf2_hmac_sha256(password: &[u8], salt: &[u8], rounds: u32, output: &mut [u
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts keys of any length");
+    let mut mac =
+        <HmacSha256 as HmacKeyInit>::new_from_slice(key).expect("HMAC accepts keys of any length");
     mac.update(data);
 
     let bytes = mac.finalize().into_bytes();
