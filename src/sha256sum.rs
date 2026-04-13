@@ -1,13 +1,15 @@
 #[cfg(windows)]
 use std::alloc::{Layout, alloc, dealloc};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
 #[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
+#[cfg(windows)]
+use std::io::{Seek, SeekFrom};
 
 #[cfg(windows)]
 use windows::Win32::Storage::FileSystem::{FILE_FLAG_NO_BUFFERING, FILE_FLAG_SEQUENTIAL_SCAN};
@@ -104,8 +106,8 @@ where
 
 pub fn compute_sha256_with_progress_and_cancel<F, G>(
     path: &Path,
-    mut progress: F,
-    mut should_abort: G,
+    progress: F,
+    should_abort: G,
 ) -> Result<String, String>
 where
     F: FnMut(u64),
@@ -113,6 +115,9 @@ where
 {
     #[cfg(windows)]
     {
+        let mut progress = progress;
+        let mut should_abort = should_abort;
+
         return compute_sha256_uncached_windows(path, &mut progress, &mut should_abort)
             .or_else(|_| compute_sha256_buffered(path, progress, should_abort));
     }

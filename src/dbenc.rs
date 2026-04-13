@@ -9,8 +9,7 @@ use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce as GcmNonce};
 use chacha20poly1305::aead::AeadInPlace;
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use hmac::{Hmac, Mac};
-use pbkdf2::pbkdf2_hmac;
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use sha2::{Digest, Sha256};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -235,7 +234,7 @@ fn build_aead_header(password: &str, format: DbEncFormat) -> Result<AeadHeader, 
         3
     };
     let mut key = [0u8; 32];
-    pbkdf2_hmac::<Sha256>(password.as_bytes(), &salt, AEAD_PBKDF2_ROUNDS, &mut key);
+    pbkdf2_hmac_sha256(password.as_bytes(), &salt, AEAD_PBKDF2_ROUNDS, &mut key);
     Ok(AeadHeader {
         magic,
         header,
@@ -266,7 +265,7 @@ fn encrypt_legacy_file_to_path(
         .write_all(&[0u8; LEGACY_MAC_LEN])
         .map_err(|e| format!("write failed: {e}"))?;
     let ciphertext_bytes = encrypt_legacy_stream_to_writer(&mut source, &mut destination, &parsed)?;
-    let mut hmac = <HmacSha256 as Mac>::new_from_slice(&parsed.mac_key)
+    let mut hmac = HmacSha256::new_from_slice(&parsed.mac_key)
         .map_err(|e| format!("hmac init failed: {e}"))?;
     hmac.update(&parsed.header);
     destination
@@ -405,7 +404,7 @@ fn parse_legacy_header(header: &[u8], mac: &[u8], password: &str) -> Result<Lega
         ));
     }
     let mut key_material = [0u8; 64];
-    pbkdf2_hmac::<Sha256>(password.as_bytes(), salt, iterations, &mut key_material);
+    pbkdf2_hmac_sha256(password.as_bytes(), salt, iterations, &mut key_material);
     let mut enc_key = [0u8; 32];
     enc_key.copy_from_slice(&key_material[..32]);
     let mut mac_key = [0u8; 32];
@@ -462,7 +461,7 @@ fn parse_aead_header(header: &[u8], password: &str) -> Result<AeadHeader, String
         return Err("encrypted header format tag mismatch".to_string());
     }
     let mut key = [0u8; 32];
-    pbkdf2_hmac::<Sha256>(password.as_bytes(), salt, iterations, &mut key);
+    pbkdf2_hmac_sha256(password.as_bytes(), salt, iterations, &mut key);
     Ok(AeadHeader {
         magic,
         header,
@@ -516,7 +515,7 @@ fn decrypt_legacy_bytes(bytes: &[u8], password: &str) -> Result<DecryptedFile, S
         password,
     )?;
     let cipher_bytes = &bytes[LEGACY_HEADER_LEN + LEGACY_MAC_LEN..];
-    let mut hmac = <HmacSha256 as Mac>::new_from_slice(&parsed.mac_key)
+    let mut hmac = HmacSha256::new_from_slice(&parsed.mac_key)
         .map_err(|e| format!("hmac init failed: {e}"))?;
     hmac.update(&parsed.header);
     hmac.update(cipher_bytes);
@@ -542,7 +541,7 @@ where
     let mut file = File::open(path).map_err(|e| format!("open failed: {e}"))?;
     file.seek(SeekFrom::Start((LEGACY_HEADER_LEN + LEGACY_MAC_LEN) as u64))
         .map_err(|e| format!("seek failed: {e}"))?;
-    let mut hmac = <HmacSha256 as Mac>::new_from_slice(&parsed.mac_key)
+    let mut hmac = HmacSha256::new_from_slice(&parsed.mac_key)
         .map_err(|e| format!("hmac init failed: {e}"))?;
     hmac.update(&parsed.header);
     let mut total = 0u64;
@@ -879,6 +878,38 @@ fn hex_digest(bytes: &[u8]) -> String {
         out.push(HEX[(byte & 0x0f) as usize] as char);
     }
 
+    out
+}
+
+fn pbkdf2_hmac_sha256(password: &[u8], salt: &[u8], rounds: u32, output: &mut [u8]) {
+    const SHA256_LEN: usize = 32;
+
+    for (block_index, chunk) in output.chunks_mut(SHA256_LEN).enumerate() {
+        let mut salt_block = Vec::with_capacity(salt.len() + 4);
+        salt_block.extend_from_slice(salt);
+        salt_block.extend_from_slice(&((block_index + 1) as u32).to_be_bytes());
+
+        let mut u = hmac_sha256(password, &salt_block);
+        let mut t = u;
+
+        for _ in 1..rounds {
+            u = hmac_sha256(password, &u);
+            for (acc, byte) in t.iter_mut().zip(u) {
+                *acc ^= byte;
+            }
+        }
+
+        chunk.copy_from_slice(&t[..chunk.len()]);
+    }
+}
+
+fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts keys of any length");
+    mac.update(data);
+
+    let bytes = mac.finalize().into_bytes();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
     out
 }
 
