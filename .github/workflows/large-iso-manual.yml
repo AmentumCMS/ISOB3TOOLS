@@ -18,53 +18,13 @@ on:
         default: "./verification/"
         type: string
 
+permissions:
+  contents: read
+
 jobs:
-  build-linux-ubi:
-    name: Build Linux GNU binaries on UBI9
-    runs-on: ubuntu-latest
-    container:
-      image: registry.access.redhat.com/ubi9/ubi:latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install system packages
-        run: |
-          set -euo pipefail
-          dnf -y update
-          dnf -y install \
-            file \
-            gcc \
-            gcc-c++ \
-            make \
-            which
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
-
-      - name: Build Linux GNU binaries
-        run: |
-          set -euo pipefail
-          cargo build --release --bin blake3iso --target x86_64-unknown-linux-gnu
-          cargo build --release --bin discdecrypt --target x86_64-unknown-linux-gnu
-          cargo build --release --bin isoenc --target x86_64-unknown-linux-gnu
-
-      - name: Upload Linux binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: large-iso-linux-binaries
-          path: |
-            target/x86_64-unknown-linux-gnu/release/blake3iso
-            target/x86_64-unknown-linux-gnu/release/discdecrypt
-            target/x86_64-unknown-linux-gnu/release/isoenc
-
   test-large-iso:
     name: Run large ISO encryption flow
     runs-on: ubuntu-latest
-    needs: [build-linux-ubi]
 
     steps:
       - name: Install tools
@@ -73,11 +33,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl xorriso
 
-      - name: Download Linux binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: large-iso-linux-binaries
-          path: testbin
+      - name: Download latest release binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p downloaded testbin
+          release_tag="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName')"
+          if [ -z "$release_tag" ] || [ "$release_tag" = "null" ]; then
+            echo "No GitHub release found for $GITHUB_REPOSITORY"
+            exit 2
+          fi
+
+          echo "Using release: $release_tag"
+          gh release download "$release_tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "ISOB3TOOLS-linux-x86_64-gnu.tar.gz" \
+            --dir downloaded
+
+          tar -xzf downloaded/ISOB3TOOLS-linux-x86_64-gnu.tar.gz -C testbin
+          cp testbin/blake3iso-linux-x86_64-gnu testbin/blake3iso
+          cp testbin/discdecrypt-linux-x86_64-gnu testbin/discdecrypt
+          cp testbin/isoenc-linux-x86_64-gnu testbin/isoenc
 
       - name: Prepare binaries
         run: |
@@ -89,25 +66,28 @@ jobs:
       - name: Download large ISO
         run: |
           set -euo pipefail
-          mkdir -p out
-          iso_name="$(basename "${{ inputs.large_iso_url }}")"
-          iso_name="${iso_name%%\?*}"
-          iso_name="${iso_name%%#*}"
-          if [ -z "$iso_name" ] || [ "$iso_name" = "." ] || [ "$iso_name" = ".." ]; then
-            iso_name="large-input.iso"
-          fi
-          if [ "${iso_name##*.}" != "iso" ]; then
-            iso_name="${iso_name}.iso"
+          mkdir -p out/input
+          (
+            cd out/input
+            curl -L --fail --remote-name --remote-header-name "${{ inputs.large_iso_url }}"
+          )
+
+          input_path="$(find out/input -maxdepth 1 -type f | sort | head -n 1)"
+          if [ -z "$input_path" ]; then
+            echo "No ISO file was downloaded."
+            exit 2
           fi
 
-          input_path="out/$iso_name"
-          output_name="${iso_name%.iso}.encrypted.iso"
+          iso_name="$(basename "$input_path")"
+          if [[ "$iso_name" == *.[iI][sS][oO] ]]; then
+            output_name="${iso_name%.[iI][sS][oO]}.encrypted.iso"
+          else
+            output_name="${iso_name}.encrypted.iso"
+          fi
           output_path="out/$output_name"
 
           echo "LARGE_ISO_INPUT=$input_path" >> "$GITHUB_ENV"
           echo "LARGE_ISO_OUTPUT=$output_path" >> "$GITHUB_ENV"
-
-          curl -L --fail --output "$input_path" "${{ inputs.large_iso_url }}"
           ls -lh "$input_path"
 
       - name: Build encrypted ISO from large input
