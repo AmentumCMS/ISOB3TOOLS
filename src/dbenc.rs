@@ -674,7 +674,7 @@ where
         .map_err(|e| format!("temp flush failed: {e}"))?;
     Ok(DecryptedTempFile {
         temp_path: temp_path.to_path_buf(),
-        plaintext_sha256: format!("{:x}", sha.finalize()),
+        plaintext_sha256: hex_digest(&sha.finalize()),
         plaintext_bytes,
         cipher_bytes: legacy_file_cipher_len(path)?,
     })
@@ -778,7 +778,7 @@ where
         .map_err(|e| format!("temp flush failed: {e}"))?;
     Ok(DecryptedTempFile {
         temp_path: temp_path.to_path_buf(),
-        plaintext_sha256: format!("{:x}", sha.finalize()),
+        plaintext_sha256: hex_digest(&sha.finalize()),
         plaintext_bytes,
         cipher_bytes,
     })
@@ -868,6 +868,18 @@ fn make_aead_aad(magic: &[u8; 8], chunk_index: u64, plaintext_len: u32) -> [u8; 
     aad[8..12].copy_from_slice(&plaintext_len.to_le_bytes());
     aad[12..16].copy_from_slice(&(chunk_index as u32).to_le_bytes());
     aad
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+
+    out
 }
 
 fn decrypt_legacy_cbc_block(

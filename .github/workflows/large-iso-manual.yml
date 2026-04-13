@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y curl xorriso
+          sudo apt-get install -y curl unzip xorriso
 
       - name: Download latest release binaries
         env:
@@ -49,12 +49,15 @@ jobs:
           gh release download "$release_tag" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "ISOB3TOOLS-linux-x86_64-gnu.tar.gz" \
+            --pattern "ISOB3TOOLS-windows-x86_64.zip" \
             --dir downloaded
 
           tar -xzf downloaded/ISOB3TOOLS-linux-x86_64-gnu.tar.gz -C testbin
+          unzip -q downloaded/ISOB3TOOLS-windows-x86_64.zip -d testbin/windows
           cp testbin/blake3iso-linux-x86_64-gnu testbin/blake3iso
           cp testbin/discdecrypt-linux-x86_64-gnu testbin/discdecrypt
           cp testbin/isoenc-linux-x86_64-gnu testbin/isoenc
+          cp testbin/windows/discdecrypt-windows-x86_64.exe testbin/discdecrypt.exe
 
       - name: Prepare binaries
         run: |

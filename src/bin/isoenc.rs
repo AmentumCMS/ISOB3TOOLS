@@ -360,6 +360,7 @@ fn inject_decryptor(root: &Path) -> Result<(), String> {
         .parent()
         .ok_or_else(|| "failed to resolve isoenc executable directory".to_string())?;
     let decryptor_path = resolve_decryptor_binary(&current_exe, exe_dir)?;
+    let windows_decryptor_path = resolve_windows_decryptor_binary(exe_dir);
 
     let target_dir = root.join("decryptor");
     fs::create_dir_all(&target_dir).map_err(|e| {
@@ -384,9 +385,17 @@ fn inject_decryptor(root: &Path) -> Result<(), String> {
         )
         .map_err(|e| format!("set discdecrypt permissions failed: {e}"))?;
     }
+    if let Some(path) = windows_decryptor_path {
+        fs::copy(&path, target_dir.join("discdecrypt.exe")).map_err(|e| {
+            format!(
+                "copy Windows decryptor failed from {}: {e}",
+                path.display()
+            )
+        })?;
+    }
     fs::write(
         target_dir.join("README.txt"),
-        "Run ./discdecrypt --input .. --output <folder>\nIf --password is omitted, the tool will prompt for it.\nEncrypted files are detected by DBENC header, not by file extension.\nPlaintext files and manifests are copied through unchanged.\n",
+        "Linux: run ./discdecrypt --input .. --output <folder>\nWindows: run discdecrypt.exe and choose this disc as the input folder.\nIf --password is omitted, the tool will prompt for it.\nEncrypted files are detected by DBENC header, not by file extension.\nPlaintext files and manifests are copied through unchanged.\n",
     )
     .map_err(|e| format!("write decryptor README failed: {e}"))?;
     fs::write(
@@ -442,6 +451,29 @@ fn resolve_decryptor_binary(current_exe: &Path, exe_dir: &Path) -> Result<PathBu
         "discdecrypt binary not found next to isoenc in {}",
         exe_dir.display()
     ))
+}
+
+fn resolve_windows_decryptor_binary(exe_dir: &Path) -> Option<PathBuf> {
+    let direct = exe_dir.join("discdecrypt.exe");
+    if direct.is_file() {
+        return Some(direct);
+    }
+
+    fs::read_dir(exe_dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| {
+                    value.starts_with("discdecrypt")
+                        && value.ends_with(".exe")
+                        && value.contains("windows")
+                })
+                .unwrap_or(false)
+                && path.is_file()
+        })
 }
 
 fn should_skip(relative: &Path, full_path: &Path, exclude_dirs: &[PathBuf]) -> bool {

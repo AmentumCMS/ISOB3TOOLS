@@ -115,12 +115,14 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release --bin blake3iso --target x86_64-pc-windows-gnu
+          cargo build --release --bin discdecrypt --target x86_64-pc-windows-gnu
           cargo build --release --bin ISOB3GUI --target x86_64-pc-windows-gnu
 
       - name: Verify built Windows binaries exist
         run: |
           set -euo pipefail
           test -f target/x86_64-pc-windows-gnu/release/blake3iso.exe
+          test -f target/x86_64-pc-windows-gnu/release/discdecrypt.exe
           test -f target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe
 
       - name: Collect Windows binaries
@@ -131,6 +133,8 @@ jobs:
 
           cp target/x86_64-pc-windows-gnu/release/blake3iso.exe \
             artifacts/windows/blake3iso-windows-x86_64.exe
+          cp target/x86_64-pc-windows-gnu/release/discdecrypt.exe \
+            artifacts/windows/discdecrypt-windows-x86_64.exe
           cp target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe \
             artifacts/windows/ISOB3GUI-windows-x86_64.exe
 

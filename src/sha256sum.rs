@@ -151,7 +151,7 @@ where
         progress(read as u64);
     }
 
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex_digest(&hasher.finalize()))
 }
 
 #[cfg(windows)]
@@ -211,7 +211,19 @@ where
         progress(tail.len() as u64);
     }
 
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex_digest(&hasher.finalize()))
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+
+    out
 }
 
 #[cfg(windows)]

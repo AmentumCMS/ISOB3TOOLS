@@ -406,7 +406,7 @@ Large manual ISO inputs that are useful for local testing, such as `Pipeline-Gro
 
 These files are intentionally not tracked in git.
 
-For GitHub Actions, use the manual workflow in [.github/workflows/large-iso-manual.yml](/C:/Users/wkron/RustroverProjects/blake3benchmark/.github/workflows/large-iso-manual.yml) and provide a download URL for the large ISO instead of committing it to the repository.
+For GitHub Actions, use the manual workflow in [.github/workflows/large-iso-manual.yml](.github/workflows/large-iso-manual.yml) and provide a download URL for the large ISO instead of committing it to the repository.
 
 ## License
 

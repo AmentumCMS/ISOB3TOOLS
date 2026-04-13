@@ -79,7 +79,7 @@ fn benchmark_md5(
         }
 
         let elapsed = start.elapsed().as_secs_f64();
-        let digest = format!("{:x}", hasher.finalize());
+        let digest = hex_digest(&hasher.finalize());
 
         if elapsed < best_time {
             best_time = elapsed;
@@ -93,6 +93,18 @@ fn benchmark_md5(
         seconds: best_time,
         bps: file_size / best_time,
     })
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+
+    out
 }
 
 fn benchmark_blake3(
