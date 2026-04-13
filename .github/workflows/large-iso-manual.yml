@@ -49,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release --bin blake3iso --target x86_64-unknown-linux-gnu
+          cargo build --release --bin discdecrypt --target x86_64-unknown-linux-gnu
           cargo build --release --bin isoenc --target x86_64-unknown-linux-gnu
 
       - name: Upload Linux binaries
@@ -57,6 +58,7 @@ jobs:
           name: large-iso-linux-binaries
           path: |
             target/x86_64-unknown-linux-gnu/release/blake3iso
+            target/x86_64-unknown-linux-gnu/release/discdecrypt
             target/x86_64-unknown-linux-gnu/release/isoenc
 
   test-large-iso:
@@ -81,20 +83,38 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x testbin/blake3iso
+          chmod +x testbin/discdecrypt
           chmod +x testbin/isoenc
 
       - name: Download large ISO
         run: |
           set -euo pipefail
           mkdir -p out
-          curl -L --fail --output out/Pipeline-Group.iso "${{ inputs.large_iso_url }}"
-          ls -lh out/Pipeline-Group.iso
+          iso_name="$(basename "${{ inputs.large_iso_url }}")"
+          iso_name="${iso_name%%\?*}"
+          iso_name="${iso_name%%#*}"
+          if [ -z "$iso_name" ] || [ "$iso_name" = "." ] || [ "$iso_name" = ".." ]; then
+            iso_name="large-input.iso"
+          fi
+          if [ "${iso_name##*.}" != "iso" ]; then
+            iso_name="${iso_name}.iso"
+          fi
+
+          input_path="out/$iso_name"
+          output_name="${iso_name%.iso}.encrypted.iso"
+          output_path="out/$output_name"
+
+          echo "LARGE_ISO_INPUT=$input_path" >> "$GITHUB_ENV"
+          echo "LARGE_ISO_OUTPUT=$output_path" >> "$GITHUB_ENV"
+
+          curl -L --fail --output "$input_path" "${{ inputs.large_iso_url }}"
+          ls -lh "$input_path"
 
       - name: Build encrypted ISO from large input
         run: |
           set -euo pipefail
-          testbin/isoenc bundle out/Pipeline-Group.iso \
-            --output out/Pipeline-Group.encrypted.iso \
+          testbin/isoenc bundle "$LARGE_ISO_INPUT" \
+            --output "$LARGE_ISO_OUTPUT" \
             --password "${{ inputs.password }}" \
             --exclude "${{ inputs.exclude }}" \
             --implant-isob3 | tee out/isoenc-large-bundle.txt
@@ -102,8 +122,8 @@ jobs:
       - name: Verify rebuilt encrypted ISO
         run: |
           set -euo pipefail
-          testbin/blake3iso check out/Pipeline-Group.encrypted.iso | tee out/isoenc-large-check.txt
-          testbin/blake3iso info out/Pipeline-Group.encrypted.iso | tee out/isoenc-large-info.txt
+          testbin/blake3iso check "$LARGE_ISO_OUTPUT" | tee out/isoenc-large-check.txt
+          testbin/blake3iso info "$LARGE_ISO_OUTPUT" | tee out/isoenc-large-info.txt
 
       - name: Upload large ISO outputs
         uses: actions/upload-artifact@v4
@@ -113,4 +133,4 @@ jobs:
             out/isoenc-large-bundle.txt
             out/isoenc-large-check.txt
             out/isoenc-large-info.txt
-            out/Pipeline-Group.encrypted.iso
+            out/*.encrypted.iso
