@@ -6,6 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel in-progress runs for the same branch/PR so stale runs don't waste
+# runner minutes.  workflow_dispatch runs are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: write
 
@@ -20,8 +26,16 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
+      - name: Cache cargo-audit binary
+        id: cache_audit
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-0.21-${{ runner.os }}
+
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        if: steps.cache_audit.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --version 0.21 --locked
 
       - name: Run cargo-audit (RustSec advisory database)
         id: cargo_audit
@@ -123,6 +137,19 @@ jobs:
         with:
           targets: x86_64-unknown-linux-gnu
 
+      - name: Cache Cargo registry and build output
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/x86_64-unknown-linux-gnu/release/.fingerprint
+            target/x86_64-unknown-linux-gnu/release/deps
+            target/x86_64-unknown-linux-gnu/release/build
+          key: cargo-linux-gnu-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-linux-gnu-
+
       - name: Build Linux GNU binaries
         run: |
           set -euo pipefail
@@ -161,6 +188,7 @@ jobs:
         with:
           name: built-binaries-linux
           path: artifacts/linux/**
+          retention-days: 7
 
       - name: Generate release tag
         if: github.event_name != 'pull_request'
@@ -186,6 +214,19 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: x86_64-pc-windows-gnu
+
+      - name: Cache Cargo registry and build output
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/x86_64-pc-windows-gnu/release/.fingerprint
+            target/x86_64-pc-windows-gnu/release/deps
+            target/x86_64-pc-windows-gnu/release/build
+          key: cargo-windows-gnu-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-windows-gnu-
 
       - name: Build Windows binaries
         run: |
@@ -225,6 +266,7 @@ jobs:
         with:
           name: built-binaries-windows
           path: artifacts/windows/**
+          retention-days: 7
 
   make-test-iso:
     name: Create real test ISO on Ubuntu
@@ -266,12 +308,7 @@ jobs:
         with:
           name: test-iso
           path: out/test.iso
-
-      - name: Upload generated plaintext ISO bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: generated-plain-iso
-          path: out/test.iso
+          retention-days: 7
 
   test-linux-ubi:
     name: Test blake3iso on UBI9
@@ -407,6 +444,7 @@ jobs:
         with:
           name: test-outputs-linux-gnu
           path: out/
+          retention-days: 7
 
   test-linux-direnc:
     name: Test direnc on Ubuntu
@@ -548,12 +586,14 @@ jobs:
         with:
           name: test-outputs-linux-direnc
           path: out/
+          retention-days: 7
 
       - name: Upload generated encrypted ISO
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: generated-encrypted-iso
           path: out/test-encrypted.iso
+          retention-days: 7
 
   package:
     name: Package release artifacts
@@ -590,6 +630,12 @@ jobs:
           set -euo pipefail
           tar -czf dist/ISOB3TOOLS-linux-x86_64-gnu.tar.gz -C dist/linux .
 
+      - name: Install xorriso and zip
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xorriso zip
+
       - name: Create Windows archive
         run: |
           set -euo pipefail
@@ -598,13 +644,7 @@ jobs:
             zip -r ../ISOB3TOOLS-windows-x86_64.zip .
           )
 
-      - name: Install xorriso
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y xorriso zip
-
-      - name: Create ISO bundle on Ubuntu
+      - name: Create ISO bundle
         run: |
           set -euo pipefail
           xorriso -as mkisofs \
@@ -710,11 +750,28 @@ jobs:
           name: packaged-artifacts
           path: scan-targets/packaged
 
-      - name: Install ClamAV and update definitions
+      - name: Install ClamAV
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y clamav
+
+      - name: Cache ClamAV virus definitions
+        id: clamav_db_cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: /var/lib/clamav
+          key: clamav-db-${{ runner.os }}-${{ steps.date.outputs.date }}
+          restore-keys: clamav-db-${{ runner.os }}-
+
+      - name: Get current date for cache key
+        id: date
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Update ClamAV definitions (if cache miss)
+        if: steps.clamav_db_cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
           sudo systemctl stop clamav-freshclam 2>/dev/null || true
           sudo freshclam --quiet
 
