@@ -1459,6 +1459,112 @@ pub fn decrypt_file_pqe_to_path(
     Ok(plaintext_bytes)
 }
 
+/// Decrypt a DBENC005 (PQE) file to a temp file, returning a [`DecryptedTempFile`].
+/// Streams chunk-by-chunk with progress callbacks and cancellation support.
+pub fn decrypt_file_pqe_to_temp_with_cancel<F, G>(
+    path: &Path,
+    dk_bytes: &[u8; PQE_DK_LEN],
+    mut progress: F,
+    mut should_abort: G,
+) -> Result<DecryptedTempFile, String>
+where
+    F: FnMut(u64),
+    G: FnMut() -> bool,
+{
+    let seed: ml_kem::Seed = dk_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| "invalid ML-KEM seed (wrong size)".to_string())?;
+    let dk = DecapsulationKey768::from_seed(seed);
+
+    let mut file = File::open(path).map_err(|e| format!("open failed: {e}"))?;
+    let mut header = [0u8; PQE_HEADER_LEN];
+    file.read_exact(&mut header)
+        .map_err(|e| format!("read PQE header failed: {e}"))?;
+
+    if &header[..8] != MAGIC_DBENC005 {
+        return Err("missing DBENC005 header".to_string());
+    }
+
+    let ss = dk
+        .decapsulate_slice(&header[8..8 + PQE_CT_LEN])
+        .map_err(|_| "ML-KEM decapsulation failed (wrong private key or corrupt header)")?;
+    let mut key = [0u8; 32];
+    key.copy_from_slice(ss.as_ref());
+
+    let mut nonce_prefix = [0u8; AEAD_XCHACHA_NONCE_LEN];
+    nonce_prefix.copy_from_slice(
+        &header[8 + PQE_CT_LEN..8 + PQE_CT_LEN + AEAD_XCHACHA_NONCE_LEN],
+    );
+
+    let temp_path = make_temp_path("pqe", Some(path));
+    let mut writer = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&temp_path)
+        .map_err(|e| format!("failed to create temp file {}: {e}", temp_path.display()))?;
+
+    let mut sha = Sha256::new();
+    let mut plaintext_bytes = 0u64;
+    let mut cipher_bytes = 0u64;
+    let mut chunk_index = 0u64;
+
+    let result = (|| -> Result<(), String> {
+        loop {
+            if should_abort() {
+                return Err("operation aborted".to_string());
+            }
+            let mut len_buf = [0u8; 4];
+            match file.read_exact(&mut len_buf) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(format!("read failed: {e}")),
+            }
+            let plaintext_len = u32::from_le_bytes(len_buf) as usize;
+            let ciphertext_len = plaintext_len + 16;
+            let mut ct_buf = vec![0u8; ciphertext_len];
+            file.read_exact(&mut ct_buf)
+                .map_err(|e| format!("read chunk failed: {e}"))?;
+            cipher_bytes += 4 + ciphertext_len as u64;
+            progress(4);
+            progress(ciphertext_len as u64);
+
+            let nonce = make_aead_nonce(DbEncFormat::DbEnc003, &nonce_prefix, chunk_index);
+            let aad = make_aead_aad(MAGIC_DBENC005, chunk_index, plaintext_len as u32);
+            let cipher = <XChaCha20Poly1305 as AeadKeyInit>::new_from_slice(&key)
+                .map_err(|e| format!("cipher init failed: {e}"))?;
+            cipher
+                .decrypt_in_place(
+                    XNonce::from_slice(&nonce[..AEAD_XCHACHA_NONCE_LEN]),
+                    &aad,
+                    &mut ct_buf,
+                )
+                .map_err(|_| "decryption failed (wrong private key or corrupt data)".to_string())?;
+            writer
+                .write_all(&ct_buf)
+                .map_err(|e| format!("temp write failed: {e}"))?;
+            sha.update(&ct_buf);
+            plaintext_bytes += ct_buf.len() as u64;
+            progress(ct_buf.len() as u64);
+            chunk_index += 1;
+        }
+        writer.flush().map_err(|e| format!("temp flush failed: {e}"))
+    })();
+
+    if result.is_err() {
+        cleanup_temp_file(&temp_path);
+        return Err(result.unwrap_err());
+    }
+
+    Ok(DecryptedTempFile {
+        temp_path,
+        plaintext_sha256: hex_digest(&sha.finalize()),
+        plaintext_bytes,
+        cipher_bytes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,7 +12,8 @@ use crate::blake3iso_core::{
     CheckOutcome, check_iso_bytes, check_iso_with_progress_and_cancel, estimate_iso_bytes,
 };
 use crate::dbenc::{
-    cleanup_temp_file, decrypt_file, decrypt_file_to_temp_with_cancel, is_encrypted_file,
+    DbEncFormat, PQE_DK_LEN, cleanup_temp_file, decrypt_file, detect_format,
+    decrypt_file_to_temp_with_cancel, decrypt_file_pqe_to_temp_with_cancel, is_encrypted_file,
 };
 use crate::media::{MediaRoot, get_media_roots};
 use crate::sha256sum::{
@@ -36,6 +37,19 @@ pub struct VerificationResult {
 pub struct EncryptionSettings {
     pub enabled: bool,
     pub password: String,
+    /// Path to a DBENC005 (ML-KEM-768) private key file (.dk, 64-byte seed).
+    /// When set, PQE-encrypted files are decrypted automatically during verification.
+    pub private_key_path: Option<PathBuf>,
+}
+
+impl Default for EncryptionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            password: String::new(),
+            private_key_path: None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -344,22 +358,47 @@ fn find_sha256_manifests(root: &Path, encryption: &EncryptionSettings) -> Vec<Pa
         .collect()
 }
 
+fn load_dk_bytes(path: &Path) -> Result<[u8; PQE_DK_LEN], String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("read key failed: {e}"))?;
+    if bytes.len() != PQE_DK_LEN {
+        return Err(format!(
+            "invalid key file: expected {} bytes, got {}",
+            PQE_DK_LEN,
+            bytes.len()
+        ));
+    }
+    let mut arr = [0u8; PQE_DK_LEN];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
+}
+
 fn is_sha256_manifest_candidate(path: &Path, encryption: &EncryptionSettings) -> bool {
     if is_sha256_manifest(path) {
         return true;
     }
 
-    if !encryption.enabled {
-        return false;
+    match detect_format(path) {
+        Ok(Some(DbEncFormat::DbEnc005)) => {
+            let Some(dk_path) = encryption.private_key_path.as_deref() else {
+                return false;
+            };
+            let Ok(dk_bytes) = load_dk_bytes(dk_path) else {
+                return false;
+            };
+            pqe_manifest_probe(path, &dk_bytes)
+                .map(|parsed| !parsed.entries.is_empty())
+                .unwrap_or(false)
+        }
+        Ok(Some(_)) => {
+            if !encryption.enabled {
+                return false;
+            }
+            encrypted_manifest_probe(path, &encryption.password)
+                .map(|parsed| !parsed.entries.is_empty())
+                .unwrap_or(false)
+        }
+        _ => false,
     }
-
-    let Ok(true) = is_encrypted_file(path) else {
-        return false;
-    };
-
-    encrypted_manifest_probe(path, &encryption.password)
-        .map(|parsed| !parsed.entries.is_empty())
-        .unwrap_or(false)
 }
 
 fn load_manifest_entries(
@@ -367,27 +406,53 @@ fn load_manifest_entries(
     encryption: &EncryptionSettings,
     tx: &Sender<WorkerEvent>,
 ) -> Result<ParsedManifest, String> {
-    if is_encrypted_file(manifest_path)? {
-        if !encryption.enabled {
-            return Err(format!(
-                "Manifest {} is encrypted. Enable encrypted-file support first.",
-                manifest_path.display()
-            ));
+    match detect_format(manifest_path)? {
+        Some(DbEncFormat::DbEnc005) => {
+            let dk_path = encryption.private_key_path.as_deref().ok_or_else(|| {
+                format!(
+                    "Manifest {} is PQE-encrypted (DBENC005). Load a private key (.dk) first.",
+                    manifest_path.display()
+                )
+            })?;
+            let dk_bytes = load_dk_bytes(dk_path)?;
+            let decrypted =
+                decrypt_file_pqe_to_temp_with_cancel(manifest_path, &dk_bytes, |_| {}, || false)?;
+            let plaintext = std::fs::read(&decrypted.temp_path)
+                .map_err(|e| format!("temp read failed: {e}"))?;
+            cleanup_temp_file(&decrypted.temp_path);
+            let _ = tx.send(WorkerEvent::Progress {
+                bytes_delta: decrypted.cipher_bytes,
+            });
+            parse_sha256_manifest_bytes(manifest_path, &plaintext)
         }
-
-        let decrypted = decrypt_file(manifest_path, &encryption.password)?;
-        let _ = tx.send(WorkerEvent::Progress {
-            bytes_delta: decrypted.cipher_bytes,
-        });
-        parse_sha256_manifest_bytes(manifest_path, &decrypted.plaintext)
-    } else {
-        parse_sha256_manifest(manifest_path)
+        Some(_) => {
+            if !encryption.enabled {
+                return Err(format!(
+                    "Manifest {} is encrypted. Enable encrypted-file support first.",
+                    manifest_path.display()
+                ));
+            }
+            let decrypted = decrypt_file(manifest_path, &encryption.password)?;
+            let _ = tx.send(WorkerEvent::Progress {
+                bytes_delta: decrypted.cipher_bytes,
+            });
+            parse_sha256_manifest_bytes(manifest_path, &decrypted.plaintext)
+        }
+        None => parse_sha256_manifest(manifest_path),
     }
 }
 
 fn encrypted_manifest_probe(manifest_path: &Path, password: &str) -> Result<ParsedManifest, String> {
     let decrypted = decrypt_file(manifest_path, password)?;
     parse_sha256_manifest_bytes(manifest_path, &decrypted.plaintext)
+}
+
+fn pqe_manifest_probe(path: &Path, dk_bytes: &[u8; PQE_DK_LEN]) -> Result<ParsedManifest, String> {
+    let decrypted = decrypt_file_pqe_to_temp_with_cancel(path, dk_bytes, |_| {}, || false)?;
+    let plaintext =
+        std::fs::read(&decrypted.temp_path).map_err(|e| format!("temp read failed: {e}"))?;
+    cleanup_temp_file(&decrypted.temp_path);
+    parse_sha256_manifest_bytes(path, &plaintext)
 }
 
 fn run_job(job: WorkerJob, tx: &Sender<WorkerEvent>, cancel: &Arc<AtomicBool>) -> JobOutcome {
@@ -549,44 +614,66 @@ fn build_verification_input(
     tx: &Sender<WorkerEvent>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<VerificationInput, String> {
-    if is_encrypted_file(target_path)? {
-        if !encryption.enabled {
-            return Err(format!(
-                "Target {} is encrypted. Enable encrypted-file support first.",
-                target_path.display()
-            ));
+    match detect_format(target_path)? {
+        Some(DbEncFormat::DbEnc005) => {
+            let dk_path = encryption.private_key_path.as_deref().ok_or_else(|| {
+                format!(
+                    "Target {} is PQE-encrypted (DBENC005). Load a private key (.dk) first.",
+                    target_path.display()
+                )
+            })?;
+            let dk_bytes = load_dk_bytes(dk_path)?;
+            let decrypted = decrypt_file_pqe_to_temp_with_cancel(
+                target_path,
+                &dk_bytes,
+                |bytes_delta| {
+                    let _ = tx.send(WorkerEvent::Progress { bytes_delta });
+                },
+                || cancel.load(Ordering::Relaxed),
+            )?;
+            Ok(VerificationInput {
+                actual_sha256: decrypted.plaintext_sha256,
+                processed_bytes: decrypted.cipher_bytes + decrypted.plaintext_bytes,
+                decrypted_path: Some(decrypted.temp_path),
+            })
         }
-
-        let decrypted = decrypt_file_to_temp_with_cancel(
-            target_path,
-            &encryption.password,
-            |bytes_delta| {
-                let _ = tx.send(WorkerEvent::Progress { bytes_delta });
-            },
-            || cancel.load(Ordering::Relaxed),
-        )?;
-
-        Ok(VerificationInput {
-            actual_sha256: decrypted.plaintext_sha256,
-            processed_bytes: decrypted.cipher_bytes + decrypted.plaintext_bytes,
-            decrypted_path: Some(decrypted.temp_path),
-        })
-    } else {
-        let processed_bytes = file_len(target_path);
-        let actual_sha256 = compute_sha256_with_progress_and_cancel(
-            target_path,
-            |bytes_delta| {
-                let _ = tx.send(WorkerEvent::Progress { bytes_delta });
-            },
-            || cancel.load(Ordering::Relaxed),
-        )
-        .map_err(|err| format!("SHA-256 error: {err}"))?;
-
-        Ok(VerificationInput {
-            actual_sha256,
-            processed_bytes,
-            decrypted_path: None,
-        })
+        Some(_) => {
+            if !encryption.enabled {
+                return Err(format!(
+                    "Target {} is encrypted. Enable encrypted-file support first.",
+                    target_path.display()
+                ));
+            }
+            let decrypted = decrypt_file_to_temp_with_cancel(
+                target_path,
+                &encryption.password,
+                |bytes_delta| {
+                    let _ = tx.send(WorkerEvent::Progress { bytes_delta });
+                },
+                || cancel.load(Ordering::Relaxed),
+            )?;
+            Ok(VerificationInput {
+                actual_sha256: decrypted.plaintext_sha256,
+                processed_bytes: decrypted.cipher_bytes + decrypted.plaintext_bytes,
+                decrypted_path: Some(decrypted.temp_path),
+            })
+        }
+        None => {
+            let processed_bytes = file_len(target_path);
+            let actual_sha256 = compute_sha256_with_progress_and_cancel(
+                target_path,
+                |bytes_delta| {
+                    let _ = tx.send(WorkerEvent::Progress { bytes_delta });
+                },
+                || cancel.load(Ordering::Relaxed),
+            )
+            .map_err(|err| format!("SHA-256 error: {err}"))?;
+            Ok(VerificationInput {
+                actual_sha256,
+                processed_bytes,
+                decrypted_path: None,
+            })
+        }
     }
 }
 

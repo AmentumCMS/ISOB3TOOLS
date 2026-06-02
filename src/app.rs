@@ -8,6 +8,7 @@ use std::{collections::HashMap, iter};
 use eframe::egui;
 
 use crate::media::MediaRoot;
+use crate::dbenc::{PQE_DK_LEN, PQE_EK_LEN, generate_pqe_keypair};
 use crate::worker::{
     EncryptionSettings, VerificationResult, WorkerEvent, discover_drives_worker,
     verify_drives_worker,
@@ -52,11 +53,27 @@ pub struct App {
     close_after_abort: bool,
     verification_started_at: Option<Instant>,
     verification_finished_at: Option<Instant>,
+
+    // Key management
+    private_key_input: String,      // path to .dk file (typed or auto-discovered)
+    keygen_open: bool,
+    keygen_prefix_input: String,
+    keygen_status: Option<Result<String, String>>,
 }
 
 impl App {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
+
+        // Pre-fill private key path if the default key exists on disk.
+        let private_key_input = default_dk_path()
+            .filter(|p| p.exists())
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+
+        let keygen_prefix_input = default_key_prefix()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "~/.isob3/default".to_string());
 
         Self {
             tx,
@@ -87,6 +104,10 @@ impl App {
             close_after_abort: false,
             verification_started_at: None,
             verification_finished_at: None,
+            private_key_input,
+            keygen_open: false,
+            keygen_prefix_input,
+            keygen_status: None,
         }
     }
 
@@ -207,9 +228,11 @@ impl App {
 
         let tx = self.tx.clone();
         let max_workers = self.worker_count;
+        let private_key_path = resolve_private_key_path(&self.private_key_input);
         let encryption = EncryptionSettings {
             enabled: self.encrypted_mode,
             password: self.password_input.clone(),
+            private_key_path,
         };
         let cancel = self.abort_requested.clone();
 
@@ -512,6 +535,38 @@ impl eframe::App for App {
                         self.show_about = true;
                     }
                 });
+            });
+
+            // Key management row
+            ui.horizontal(|ui| {
+                ui.label("🔑 Private key (.dk):");
+                let key_hint = if self.private_key_input.is_empty() {
+                    "path/to/key.dk (or leave blank to auto-discover ~/.isob3/default.dk)"
+                } else {
+                    ""
+                };
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.private_key_input)
+                        .hint_text(key_hint)
+                        .desired_width(340.0),
+                );
+
+                // Show whether the path resolves to an existing file
+                if let Some(dk) = resolve_private_key_path(&self.private_key_input) {
+                    if dk.exists() {
+                        ui.colored_label(egui::Color32::GREEN, "✔ key found");
+                    } else {
+                        ui.colored_label(egui::Color32::RED, "✘ not found");
+                    }
+                } else {
+                    ui.colored_label(egui::Color32::GRAY, "(none)");
+                }
+
+                ui.separator();
+                if ui.button("Generate Keypair…").clicked() {
+                    self.keygen_status = None;
+                    self.keygen_open = true;
+                }
             });
 
             let progress = if self.total == 0 {
@@ -876,8 +931,145 @@ impl eframe::App for App {
             self.abort_confirm_open = is_open;
         }
 
+        if self.keygen_open {
+            let mut generate_clicked = false;
+            let mut close_clicked = false;
+            egui::Window::new("Generate ML-KEM-768 Keypair")
+                .collapsible(false)
+                .resizable(false)
+                .default_width(480.0)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(&ctx, |ui| {
+                    ui.label("Generates a post-quantum (ML-KEM-768) keypair:");
+                    ui.label("  • .ek — encapsulation key (public, 1184 bytes) — share with disc producers");
+                    ui.label("  • .dk — decapsulation key (private, 64 bytes)  — keep secret, needed to verify");
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Output prefix:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.keygen_prefix_input)
+                                .desired_width(300.0),
+                        );
+                    });
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Will write: {}.ek  and  {}.dk",
+                            self.keygen_prefix_input, self.keygen_prefix_input
+                        ))
+                        .weak(),
+                    );
+
+                    ui.add_space(8.0);
+
+                    if let Some(ref status) = self.keygen_status {
+                        match status {
+                            Ok(msg) => {
+                                ui.colored_label(egui::Color32::GREEN, msg);
+                            }
+                            Err(msg) => {
+                                ui.colored_label(egui::Color32::RED, format!("Error: {msg}"));
+                            }
+                        }
+                        ui.add_space(4.0);
+                    }
+
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !self.keygen_prefix_input.is_empty(),
+                                egui::Button::new("Generate"),
+                            )
+                            .clicked()
+                        {
+                            generate_clicked = true;
+                        }
+                        if ui.button("Close").clicked() {
+                            close_clicked = true;
+                        }
+                    });
+                });
+
+            if generate_clicked {
+                self.keygen_status = Some(run_keygen_gui(&self.keygen_prefix_input));
+                // Auto-load the new .dk if no key is set yet
+                if let Some(Ok(_)) = &self.keygen_status {
+                    if self.private_key_input.is_empty() {
+                        self.private_key_input = format!("{}.dk", self.keygen_prefix_input);
+                    }
+                }
+            }
+
+            if close_clicked {
+                self.keygen_open = false;
+            }
+        }
+
         ctx.request_repaint_after(Duration::from_millis(100));
     }
+}
+
+/// Returns the default `~/.isob3` directory for the current platform.
+fn default_key_dir() -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    let home = std::env::var("USERPROFILE").ok()?;
+    #[cfg(not(windows))]
+    let home = std::env::var("HOME").ok()?;
+    Some(std::path::PathBuf::from(home).join(".isob3"))
+}
+
+/// Default key prefix: `~/.isob3/default`
+fn default_key_prefix() -> Option<std::path::PathBuf> {
+    Some(default_key_dir()?.join("default"))
+}
+
+/// Default private key path: `~/.isob3/default.dk`
+fn default_dk_path() -> Option<std::path::PathBuf> {
+    Some(default_key_prefix()?.with_extension("dk"))
+}
+
+/// Resolve the private key path from user input, falling back to the default.
+/// Returns `None` if neither the input nor the default produces a usable path.
+fn resolve_private_key_path(input: &str) -> Option<std::path::PathBuf> {
+    if !input.trim().is_empty() {
+        return Some(std::path::PathBuf::from(input.trim()));
+    }
+    default_dk_path()
+}
+
+/// Run keygen synchronously (ML-KEM key generation is fast — microseconds).
+/// Writes `{prefix}.ek` and `{prefix}.dk`, returns a human-readable status message.
+fn run_keygen_gui(prefix: &str) -> Result<String, String> {
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        return Err("Output prefix must not be empty.".to_string());
+    }
+
+    let ek_path = std::path::PathBuf::from(format!("{prefix}.ek"));
+    let dk_path = std::path::PathBuf::from(format!("{prefix}.dk"));
+
+    // Create parent directory if needed
+    if let Some(parent) = ek_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create directory failed: {e}"))?;
+        }
+    }
+
+    let (ek_bytes, dk_bytes) = generate_pqe_keypair()?;
+
+    std::fs::write(&ek_path, &ek_bytes)
+        .map_err(|e| format!("write {}: {e}", ek_path.display()))?;
+    std::fs::write(&dk_path, &dk_bytes)
+        .map_err(|e| format!("write {}: {e}", dk_path.display()))?;
+
+    Ok(format!(
+        "✔ Keypair written.\n  Public  (.ek): {}  [{} bytes]\n  Private (.dk): {}  [{} bytes]",
+        ek_path.display(),
+        PQE_EK_LEN,
+        dk_path.display(),
+        PQE_DK_LEN,
+    ))
 }
 
 fn human_bytes(num_bytes: u64) -> String {
