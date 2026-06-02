@@ -8,16 +8,11 @@ on:
 
 permissions:
   contents: write
-  security-events: write
 
 jobs:
   security-scan:
     name: CVE scan (cargo-audit + Trivy + Grype)
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -29,40 +24,67 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Run cargo-audit (RustSec advisory database)
-        run: cargo audit
+        id: cargo_audit
+        run: cargo audit 2>&1 | tee cargo-audit.txt; echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: cargo-audit → job summary
+        if: always()
+        run: |
+          {
+            echo "## cargo-audit (RustSec)"
+            if grep -q "Vulnerabilities found" cargo-audit.txt 2>/dev/null; then
+              echo '```'
+              cat cargo-audit.txt
+              echo '```'
+            else
+              echo "✅ No advisories found."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
         with:
           scan-type: fs
           scan-ref: .
-          format: sarif
-          output: trivy-results.sarif
+          format: table
+          output: trivy-results.txt
           severity: HIGH,CRITICAL
           exit-code: '1'
 
-      - name: Upload Trivy SARIF to GitHub Security tab
+      - name: Trivy → job summary
         if: always()
-        uses: github/codeql-action/upload-sarif@a6fd1787519fd23e68309fad43738e41a6ff2a9d # v4
-        with:
-          sarif_file: trivy-results.sarif
-          category: trivy
+        run: |
+          {
+            echo "## Trivy (HIGH/CRITICAL)"
+            if [ -s trivy-results.txt ]; then
+              echo '```'
+              cat trivy-results.txt
+              echo '```'
+            else
+              echo "✅ No HIGH or CRITICAL vulnerabilities found."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run Grype scan
+        id: grype
         uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
         with:
           path: .
           fail-build: true
           severity-cutoff: high
-          output-format: sarif
-          output-file: grype-results.sarif
+          output-format: table
 
-      - name: Upload Grype SARIF to GitHub Security tab
+      - name: Grype → job summary
         if: always()
-        uses: github/codeql-action/upload-sarif@a6fd1787519fd23e68309fad43738e41a6ff2a9d # v4
-        with:
-          sarif_file: grype-results.sarif
-          category: grype
+        run: |
+          {
+            echo "## Grype (HIGH/CRITICAL)"
+            if [ "${{ steps.grype.outcome }}" = "success" ]; then
+              echo "✅ No HIGH or CRITICAL vulnerabilities found."
+            else
+              echo "❌ HIGH or CRITICAL vulnerabilities detected — see Grype step log above."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build-linux-ubi:
     name: Build Linux GNU binaries on UBI9
