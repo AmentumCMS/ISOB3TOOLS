@@ -14,6 +14,9 @@ jobs:
   security-scan:
     name: CVE scan (cargo-audit + Trivy + Grype)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
       - name: Checkout
@@ -40,25 +43,25 @@ jobs:
 
       - name: Upload Trivy SARIF to GitHub Security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@b22c66273205240d86582638b860f9b25772b4d3 # v3
+        uses: github/codeql-action/upload-sarif@a6fd1787519fd23e68309fad43738e41a6ff2a9d # v4
         with:
           sarif_file: trivy-results.sarif
           category: trivy
 
       - name: Run Grype scan
-        id: grype
         uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
         with:
           path: .
           fail-build: true
           severity-cutoff: high
           output-format: sarif
+          output-file: grype-results.sarif
 
       - name: Upload Grype SARIF to GitHub Security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@b22c66273205240d86582638b860f9b25772b4d3 # v3
+        uses: github/codeql-action/upload-sarif@a6fd1787519fd23e68309fad43738e41a6ff2a9d # v4
         with:
-          sarif_file: ${{ steps.grype.outputs.sarif }}
+          sarif_file: grype-results.sarif
           category: grype
 
   build-linux-ubi:
