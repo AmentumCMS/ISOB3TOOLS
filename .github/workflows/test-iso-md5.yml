@@ -538,6 +538,14 @@ jobs:
             -o dist/ISOB3TOOLS-binaries.iso \
             iso-root
 
+      - name: Implant and verify ISOB3 in release ISO
+        run: |
+          set -euo pipefail
+          chmod +x dist/linux/blake3iso-linux-x86_64-gnu
+          dist/linux/blake3iso-linux-x86_64-gnu implant dist/ISOB3TOOLS-binaries.iso
+          dist/linux/blake3iso-linux-x86_64-gnu check  dist/ISOB3TOOLS-binaries.iso
+          dist/linux/blake3iso-linux-x86_64-gnu info   dist/ISOB3TOOLS-binaries.iso
+
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v4
         with:
