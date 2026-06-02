@@ -10,7 +10,10 @@ use clap::Parser;
 use eframe::egui;
 use walkdir::WalkDir;
 
-use isob3_tools::dbenc::{decrypt_file_to_path, is_encrypted_file};
+use isob3_tools::dbenc::{
+    DbEncFormat, PQE_DK_LEN, decrypt_file_pqe_to_path, decrypt_file_to_path, detect_format,
+    is_encrypted_file,
+};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -25,8 +28,12 @@ struct Cli {
     input: PathBuf,
     #[arg(long)]
     output: Option<PathBuf>,
+    /// Password for DBENC001–003 symmetric encryption.
     #[arg(long)]
     password: Option<String>,
+    /// Path to ML-KEM-768 decapsulation key (.dk) for DBENC005 (PQE) files.
+    #[arg(long)]
+    private_key: Option<PathBuf>,
 }
 
 fn main() {
@@ -50,25 +57,75 @@ fn main() {
             std::process::exit(2);
         }
     });
-    let password = cli.password.unwrap_or_else(|| match prompt("Password") {
-        Ok(value) if !value.is_empty() => value,
-        Ok(_) => {
-            eprintln!("password is required");
-            std::process::exit(2);
-        }
-        Err(err) => {
-            eprintln!("failed to read password: {err}");
-            std::process::exit(2);
-        }
-    });
 
-    match run(&cli.input, &output, &password) {
+    let private_key: Option<[u8; PQE_DK_LEN]> = match cli.private_key.as_deref() {
+        Some(path) => match load_private_key(path) {
+            Ok(k) => Some(k),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        },
+        None => {
+            // Auto-discover default decapsulation key
+            if let Some(default_dk) = default_key_dir().map(|d| d.join("default.dk")) {
+                if default_dk.is_file() {
+                    eprintln!("Using default decapsulation key: {}", default_dk.display());
+                    match load_private_key(&default_dk) {
+                        Ok(k) => Some(k),
+                        Err(e) => {
+                            eprintln!("{e}");
+                            std::process::exit(2);
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+    };
+
+    let password = if private_key.is_none() {
+        Some(cli.password.unwrap_or_else(|| match prompt("Password") {
+            Ok(value) if !value.is_empty() => value,
+            Ok(_) => {
+                eprintln!("password is required");
+                std::process::exit(2);
+            }
+            Err(err) => {
+                eprintln!("failed to read password: {err}");
+                std::process::exit(2);
+            }
+        }))
+    } else {
+        cli.password
+    };
+
+    match run(&cli.input, &output, password.as_deref(), private_key.as_ref()) {
         Ok(summary) => println!("{summary}"),
         Err(err) => {
             eprintln!("{err}");
             std::process::exit(2);
         }
     }
+}
+
+fn default_key_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let home = std::env::var("USERPROFILE").ok()?;
+    #[cfg(not(windows))]
+    let home = std::env::var("HOME").ok()?;
+    Some(PathBuf::from(home).join(".isob3"))
+}
+
+fn load_private_key(path: &Path) -> Result<[u8; PQE_DK_LEN], String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
+    bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| format!("{} is not a valid ML-KEM-768 decapsulation key (expected {PQE_DK_LEN} bytes)", path.display()))
 }
 
 fn run_gui() -> eframe::Result<()> {
@@ -224,7 +281,7 @@ impl DiscDecryptApp {
         self.status = "Decrypting...".to_string();
 
         thread::spawn(move || {
-            let result = run(&input, &output, &password);
+            let result = run(&input, &output, Some(&password), None);
             let _ = tx.send(result);
         });
     }
@@ -275,7 +332,12 @@ fn browse_folder(title: &str) -> Result<Option<PathBuf>, String> {
     }
 }
 
-fn run(input_root: &Path, output_root: &Path, password: &str) -> Result<String, String> {
+fn run(
+    input_root: &Path,
+    output_root: &Path,
+    password: Option<&str>,
+    private_key: Option<&[u8; PQE_DK_LEN]>,
+) -> Result<String, String> {
     if !input_root.is_dir() {
         return Err(format!(
             "input directory not found: {}",
@@ -324,8 +386,26 @@ fn run(input_root: &Path, output_root: &Path, password: &str) -> Result<String, 
         }
 
         if is_encrypted_file(path)? {
-            decrypt_file_to_path(path, &destination, password)
-                .map_err(|e| format!("decrypt failed for {}: {e}", path.display()))?;
+            let fmt = detect_format(path)?;
+            if fmt == Some(DbEncFormat::DbEnc005) {
+                let dk = private_key.ok_or_else(|| {
+                    format!(
+                        "{} is DBENC005 (PQE) — pass --private-key <key.dk>",
+                        path.display()
+                    )
+                })?;
+                decrypt_file_pqe_to_path(path, &destination, dk)
+                    .map_err(|e| format!("decrypt failed for {}: {e}", path.display()))?;
+            } else {
+                let pw = password.ok_or_else(|| {
+                    format!(
+                        "{} is password-encrypted — pass --password",
+                        path.display()
+                    )
+                })?;
+                decrypt_file_to_path(path, &destination, pw)
+                    .map_err(|e| format!("decrypt failed for {}: {e}", path.display()))?;
+            }
             decrypted += 1;
         } else {
             if let Some(parent) = destination.parent() {

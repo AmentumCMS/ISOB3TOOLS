@@ -15,22 +15,27 @@ Available on Linux and Windows.
 ## Usage
 
 ```
-direnc <DIRECTORY> --password <PASSWORD> [OPTIONS]
+direnc <DIRECTORY> (--password <PW> | --public-key <FILE>) [OPTIONS]
 ```
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `DIRECTORY` | path | yes | Directory to process in place |
-| `--password <PASSWORD>` | string | yes | Encryption password applied to all payload files |
-| `--format <FORMAT>` | string | no | Encryption format (default: `xchacha20`) |
+| `--password <PW>` | string | see note | Encryption password for DBENC001–003. Mutually exclusive with `--public-key`. |
+| `--public-key <FILE>` | path | see note | ML-KEM-768 encapsulation key (`.ek`) for DBENC004 (post-quantum). Mutually exclusive with `--password`. |
+| `--format <FORMAT>` | string | no | Encryption format. Defaults to `xchacha20` (password) or `pqe-xchacha20` (public key). |
 | `--exclude <DIRS>` | string | no | Comma-separated list of subdirectory paths to skip |
+
+One of `--password` or `--public-key` is required.
 
 ### `--format`
 
 | Name | Format | Notes |
 |---|---|---|
-| `xchacha20` | DBENC003 XChaCha20-Poly1305 | Default |
-| `aes-gcm` | DBENC002 AES-256-GCM | |
+| `argon2id` | DBENC004 Argon2id + XChaCha20-Poly1305 | Default with `--password` |
+| `pqe-xchacha20` | DBENC005 ML-KEM-768 + XChaCha20-Poly1305 | Default with `--public-key` |
+| `xchacha20` | DBENC003 XChaCha20-Poly1305 + PBKDF2 | |
+| `aes-gcm` | DBENC002 AES-256-GCM + PBKDF2 | |
 | `legacy-cbc` | DBENC001 AES-256-CBC + HMAC-SHA256 | Compatibility only |
 
 ### `--exclude`
@@ -42,13 +47,14 @@ SHA-256 manifest files (detected by content, not extension) are always skipped r
 Examples:
 
 ```bash
-# Exclude a single directory
+# Password-based encryption (symmetric)
 direnc iso-staging --password secret --exclude ./verification/
 
-# Exclude multiple directories
-direnc iso-staging --password secret --exclude ./verification/,./test/fixtures/
+# PQE encryption with an ML-KEM-768 public key
+blake3iso keygen --output release-2026
+direnc iso-staging --public-key release-2026.ek
 
-# Choose encryption format
+# Override format explicitly
 direnc iso-staging --password secret --format aes-gcm
 ```
 

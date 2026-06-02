@@ -63,8 +63,10 @@ See [docs/discdecrypt.md](docs/discdecrypt.md) for CLI reference and GUI mode.
 
 | Name | ID | Algorithm |
 |---|---|---|
-| `xchacha20` | DBENC003 | XChaCha20-Poly1305 — **default** |
-| `aes-gcm` | DBENC002 | AES-256-GCM |
+| `argon2id` | DBENC004 | Argon2id + XChaCha20-Poly1305 — **default** (password) |
+| `pqe-xchacha20` | DBENC005 | ML-KEM-768 + XChaCha20-Poly1305 — **default** (public key) |
+| `xchacha20` | DBENC003 | XChaCha20-Poly1305 + PBKDF2-HMAC-SHA256 |
+| `aes-gcm` | DBENC002 | AES-256-GCM + PBKDF2-HMAC-SHA256 |
 | `legacy-cbc` | DBENC001 | AES-256-CBC + HMAC-SHA256 |
 
 ## ISOB3 Metadata

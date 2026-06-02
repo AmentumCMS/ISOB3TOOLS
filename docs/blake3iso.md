@@ -103,6 +103,37 @@ blake3iso remove release.iso
 
 ---
 
+### keygen
+
+Generate an ML-KEM-768 keypair for DBENC005 (post-quantum) encryption.
+
+```
+blake3iso keygen [--output <PREFIX>]
+```
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `--output` | prefix path | no | Base name for key files (e.g. `mykey` → `mykey.ek` and `mykey.dk`). Defaults to `~/.isob3/default`. |
+
+Output:
+- `<PREFIX>.ek` — encapsulation key (public, 1184 bytes). Give this to `direnc --public-key` for DBENC005.
+- `<PREFIX>.dk` — decapsulation key (private seed, 64 bytes). Keep this secret; give it to `discdecrypt --private-key`.
+
+If keys are placed at `~/.isob3/default.ek` and `~/.isob3/default.dk`, `direnc` and `discdecrypt` will discover them automatically when no key flag is given.
+
+Examples:
+
+```bash
+# Write to default location (~/.isob3/default.ek and .dk)
+blake3iso keygen
+
+# Write to an explicit prefix
+blake3iso keygen --output release-2026
+# Writes release-2026.ek and release-2026.dk
+```
+
+---
+
 ## Exit Codes
 
 | Code | Meaning |

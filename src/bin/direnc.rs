@@ -1,11 +1,14 @@
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
 use walkdir::WalkDir;
 
-use isob3_tools::dbenc::{DbEncFormat, encrypt_file_to_path, parse_format_name};
+use isob3_tools::dbenc::{
+    DbEncFormat, PQE_EK_LEN, encrypt_file_pqe, encrypt_file_to_path, parse_format_name,
+};
 use isob3_tools::sha256sum::is_sha256_manifest;
 
 #[derive(Parser)]
@@ -16,18 +19,37 @@ use isob3_tools::sha256sum::is_sha256_manifest;
 )]
 struct Cli {
     directory: PathBuf,
-    #[arg(long)]
-    password: String,
+    /// Password for DBENC001–004 (symmetric). Mutually exclusive with --public-key.
+    /// If neither --password nor --public-key is given, looks for ~/.isob3/default.ek first.
+    #[arg(long, conflicts_with = "public_key")]
+    password: Option<String>,
+    /// Path to ML-KEM-768 encapsulation key (.ek) for DBENC005 (PQE).
+    /// Mutually exclusive with --password.
+    #[arg(long, conflicts_with = "password")]
+    public_key: Option<PathBuf>,
     #[arg(long)]
     format: Option<String>,
     #[arg(long)]
     exclude: Option<String>,
 }
 
+enum EncKey {
+    Password(String),
+    PublicKey([u8; PQE_EK_LEN]),
+}
+
 fn main() {
     let cli = Cli::parse();
 
-    let format = match resolve_format(cli.format.as_deref()) {
+    let enc_key = match resolve_enc_key(cli.password, cli.public_key) {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
+
+    let format = match resolve_format(cli.format.as_deref(), &enc_key) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("{e}");
@@ -37,7 +59,7 @@ fn main() {
 
     let exclude_dirs = parse_exclude_dirs(cli.exclude.as_deref());
 
-    match run(&cli.directory, &cli.password, format, &exclude_dirs) {
+    match run(&cli.directory, &enc_key, format, &exclude_dirs) {
         Ok(msg) => println!("{msg}"),
         Err(e) => {
             eprintln!("{e}");
@@ -46,9 +68,54 @@ fn main() {
     }
 }
 
+fn default_key_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let home = std::env::var("USERPROFILE").ok()?;
+    #[cfg(not(windows))]
+    let home = std::env::var("HOME").ok()?;
+    Some(PathBuf::from(home).join(".isob3"))
+}
+
+fn resolve_enc_key(password: Option<String>, public_key: Option<PathBuf>) -> Result<EncKey, String> {
+    if let Some(pk_path) = public_key {
+        return Ok(EncKey::PublicKey(load_public_key(&pk_path)?));
+    }
+    if let Some(pw) = password {
+        return Ok(EncKey::Password(pw));
+    }
+    if let Some(default_ek) = default_key_dir().map(|d| d.join("default.ek")) {
+        if default_ek.is_file() {
+            eprintln!("Using default encapsulation key: {}", default_ek.display());
+            return Ok(EncKey::PublicKey(load_public_key(&default_ek)?));
+        }
+    }
+    // Fall back to password prompt
+    match prompt("Password") {
+        Ok(pw) if !pw.is_empty() => Ok(EncKey::Password(pw)),
+        Ok(_) => Err("password is required (or provide --public-key, or place a key at ~/.isob3/default.ek)".to_string()),
+        Err(e) => Err(format!("failed to read password: {e}")),
+    }
+}
+
+fn prompt(label: &str) -> io::Result<String> {
+    print!("{label}: ");
+    io::stdout().flush()?;
+    let mut value = String::new();
+    io::stdin().read_line(&mut value)?;
+    Ok(value.trim().to_string())
+}
+
+fn load_public_key(path: &PathBuf) -> Result<[u8; PQE_EK_LEN], String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
+    bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| format!("{} is not a valid ML-KEM-768 encapsulation key (expected {PQE_EK_LEN} bytes)", path.display()))
+}
+
 fn run(
     dir: &Path,
-    password: &str,
+    enc_key: &EncKey,
     format: DbEncFormat,
     exclude_dirs: &[PathBuf],
 ) -> Result<String, String> {
@@ -56,7 +123,7 @@ fn run(
         return Err(format!("directory not found: {}", dir.display()));
     }
 
-    let encrypted = encrypt_tree_in_place(dir, password, format, exclude_dirs)?;
+    let encrypted = encrypt_tree_in_place(dir, enc_key, format, exclude_dirs)?;
     inject_decryptor(dir)?;
 
     Ok(format!(
@@ -68,12 +135,15 @@ fn run(
     ))
 }
 
-fn resolve_format(name: Option<&str>) -> Result<DbEncFormat, String> {
+fn resolve_format(name: Option<&str>, key: &EncKey) -> Result<DbEncFormat, String> {
     match name {
         Some(n) => {
             parse_format_name(n).ok_or_else(|| format!("unsupported encryption format: {n}"))
         }
-        None => Ok(DbEncFormat::default_modern()),
+        None => match key {
+            EncKey::PublicKey(_) => Ok(DbEncFormat::DbEnc005),
+            EncKey::Password(_) => Ok(DbEncFormat::default_modern()),
+        },
     }
 }
 
@@ -112,7 +182,7 @@ fn format_excludes(excludes: &[PathBuf]) -> String {
 
 fn encrypt_tree_in_place(
     root: &Path,
-    password: &str,
+    enc_key: &EncKey,
     format: DbEncFormat,
     exclude_dirs: &[PathBuf],
 ) -> Result<usize, String> {
@@ -130,7 +200,11 @@ fn encrypt_tree_in_place(
         }
 
         let temp = sibling_temp_path(path);
-        match encrypt_file_to_path(path, &temp, password, format) {
+        let result = match enc_key {
+            EncKey::Password(pw) => encrypt_file_to_path(path, &temp, pw, format),
+            EncKey::PublicKey(ek) => encrypt_file_pqe(path, &temp, ek),
+        };
+        match result {
             Ok(_) => {
                 fs::rename(&temp, path)
                     .map_err(|e| format!("replace failed for {}: {e}", path.display()))?;

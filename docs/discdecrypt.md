@@ -29,15 +29,21 @@ discdecrypt [OPTIONS]
 |---|---|---|---|
 | `--input <PATH>` | path | no | Root of the disc or extracted directory (default: current directory `.`) |
 | `--output <PATH>` | path | no | Output directory for decrypted files (prompted if omitted) |
-| `--password <PASSWORD>` | string | no | Decryption password (prompted if omitted) |
+| `--password <PASSWORD>` | string | no | Decryption password for DBENC001–003 files (prompted if omitted and `--private-key` not given) |
+| `--private-key <FILE>` | path | no | ML-KEM-768 decapsulation key (`.dk`) for DBENC005 (post-quantum) files |
 
-If `--output` or `--password` is omitted and the tool is running in a terminal, it will prompt for the missing value interactively.
+Provide `--password` for password-encrypted discs or `--private-key` for PQE-encrypted discs. If neither is supplied and no `--private-key` is given, the tool prompts for a password interactively.
+
+Per-file format detection: each file's DBENC header is checked independently. A DBENC005 file requires `--private-key`; other DBENC files require `--password`.
 
 Examples:
 
 ```bash
-# Explicit args
+# Password-encrypted disc
 discdecrypt --input /media/disc --output ~/decrypted --password secret
+
+# PQE-encrypted disc
+discdecrypt --input /media/disc --output ~/decrypted --private-key release-2026.dk
 
 # Let the tool prompt for password
 discdecrypt --input /media/disc --output ~/decrypted
