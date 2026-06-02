@@ -873,7 +873,7 @@ impl eframe::App for App {
                 .default_width(420.0)
                 .show(&ctx, |ui| {
                     ui.label(
-                        "Enter the shared password used for DBENC001 AES-256 encrypted files.",
+                        "Enter the password used to decrypt DBENC001–DBENC004 encrypted files.",
                     );
                     ui.add_space(8.0);
                     ui.add(

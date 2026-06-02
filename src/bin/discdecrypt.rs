@@ -141,14 +141,35 @@ fn run_gui() -> eframe::Result<()> {
     )
 }
 
-#[derive(Default)]
 struct DiscDecryptApp {
     input: String,
     output: String,
     password: String,
+    private_key_input: String, // path to .dk file
     status: String,
     running: bool,
     rx: Option<Receiver<Result<String, String>>>,
+}
+
+impl Default for DiscDecryptApp {
+    fn default() -> Self {
+        // Pre-fill private key path if the default exists on disk.
+        let private_key_input = default_key_dir()
+            .map(|d| d.join("default.dk"))
+            .filter(|p| p.is_file())
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+
+        Self {
+            input: String::new(),
+            output: String::new(),
+            password: String::new(),
+            private_key_input,
+            status: String::new(),
+            running: false,
+            rx: None,
+        }
+    }
 }
 
 impl eframe::App for DiscDecryptApp {
@@ -212,13 +233,60 @@ impl eframe::App for DiscDecryptApp {
             });
 
             ui.add_space(8.0);
-            ui.label("Password:");
-            ui.add_enabled(
-                !self.running,
-                egui::TextEdit::singleline(&mut self.password)
-                    .password(true)
-                    .desired_width(f32::INFINITY),
-            );
+
+            // --- Decryption method ---
+            ui.label("Decryption method (use one):");
+
+            // Private key row (DBENC005 / PQE)
+            ui.horizontal(|ui| {
+                ui.label("  🔑 Private key (.dk):");
+                let dk_hint = if self.private_key_input.is_empty() {
+                    "path/to/key.dk (leave blank to use password below)"
+                } else {
+                    ""
+                };
+                ui.add_enabled(
+                    !self.running,
+                    egui::TextEdit::singleline(&mut self.private_key_input)
+                        .hint_text(dk_hint)
+                        .desired_width(300.0),
+                );
+                // Live existence indicator
+                if !self.private_key_input.trim().is_empty() {
+                    if std::path::Path::new(self.private_key_input.trim()).exists() {
+                        ui.colored_label(egui::Color32::GREEN, "✔ found");
+                    } else {
+                        ui.colored_label(egui::Color32::RED, "✘ not found");
+                    }
+                } else {
+                    ui.colored_label(egui::Color32::GRAY, "(none — will use password)");
+                }
+            });
+
+            ui.add_space(4.0);
+
+            // Password row (DBENC001–004)
+            let using_key = !self.private_key_input.trim().is_empty();
+            ui.horizontal(|ui| {
+                ui.label("  🔒 Password:");
+                ui.add_enabled(
+                    !self.running && !using_key,
+                    egui::TextEdit::singleline(&mut self.password)
+                        .hint_text(if using_key {
+                            "(not needed when private key is set)"
+                        } else {
+                            "password for DBENC001–DBENC004"
+                        })
+                        .password(true)
+                        .desired_width(f32::INFINITY),
+                );
+            });
+            if using_key {
+                ui.colored_label(
+                    egui::Color32::GRAY,
+                    "  Private key takes priority — password field is ignored.",
+                );
+            }
 
             ui.add_space(12.0);
             ui.horizontal(|ui| {
@@ -258,6 +326,7 @@ impl DiscDecryptApp {
     fn start_decrypt(&mut self) {
         let input = self.input.trim().to_string();
         let output = self.output.trim().to_string();
+        let dk_path_str = self.private_key_input.trim().to_string();
         let password = self.password.clone();
 
         if input.is_empty() {
@@ -268,10 +337,31 @@ impl DiscDecryptApp {
             self.status = "ERROR: output folder is required".to_string();
             return;
         }
-        if password.is_empty() {
-            self.status = "ERROR: password is required".to_string();
-            return;
-        }
+
+        // Resolve private key — required if set, otherwise fall back to password
+        let private_key: Option<[u8; PQE_DK_LEN]> = if !dk_path_str.is_empty() {
+            match load_private_key(std::path::Path::new(&dk_path_str)) {
+                Ok(k) => Some(k),
+                Err(e) => {
+                    self.status = format!("ERROR: {e}");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        // Password required only when no private key is loaded
+        let password_opt: Option<String> = if private_key.is_none() {
+            if password.is_empty() {
+                self.status =
+                    "ERROR: either a private key (.dk) or a password is required".to_string();
+                return;
+            }
+            Some(password)
+        } else {
+            None
+        };
 
         let input = PathBuf::from(input);
         let output = PathBuf::from(output);
@@ -281,7 +371,12 @@ impl DiscDecryptApp {
         self.status = "Decrypting...".to_string();
 
         thread::spawn(move || {
-            let result = run(&input, &output, Some(&password), None);
+            let result = run(
+                &input,
+                &output,
+                password_opt.as_deref(),
+                private_key.as_ref(),
+            );
             let _ = tx.send(result);
         });
     }
