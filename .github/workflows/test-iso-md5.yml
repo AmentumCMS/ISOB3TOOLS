@@ -17,10 +17,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
@@ -29,7 +29,7 @@ jobs:
         run: cargo audit
 
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
         with:
           scan-type: fs
           scan-ref: .
@@ -40,14 +40,14 @@ jobs:
 
       - name: Upload Trivy SARIF to GitHub Security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@b22c66273205240d86582638b860f9b25772b4d3 # v3
         with:
           sarif_file: trivy-results.sarif
           category: trivy
 
       - name: Run Grype scan
         id: grype
-        uses: anchore/scan-action@v6
+        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
         with:
           path: .
           fail-build: true
@@ -56,7 +56,7 @@ jobs:
 
       - name: Upload Grype SARIF to GitHub Security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@b22c66273205240d86582638b860f9b25772b4d3 # v3
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
           category: grype
@@ -71,7 +71,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install system packages
         run: |
@@ -94,7 +94,7 @@ jobs:
           test "$GLIBC_VERSION" = "2.34"
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: x86_64-unknown-linux-gnu
 
@@ -132,7 +132,7 @@ jobs:
           cp README.md artifacts/linux/ || true
 
       - name: Upload Linux binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: built-binaries-linux
           path: artifacts/linux/**
@@ -149,7 +149,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install system packages
         run: |
@@ -158,7 +158,7 @@ jobs:
           sudo apt-get install -y mingw-w64
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: x86_64-pc-windows-gnu
 
@@ -196,7 +196,7 @@ jobs:
           cp README.md artifacts/windows/ || true
 
       - name: Upload Windows binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: built-binaries-windows
           path: artifacts/windows/**
@@ -237,13 +237,13 @@ jobs:
             test-iso-root
 
       - name: Upload test ISO
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-iso
           path: out/test.iso
 
       - name: Upload generated plaintext ISO bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: generated-plain-iso
           path: out/test.iso
@@ -257,7 +257,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install system packages
         run: |
@@ -276,13 +276,13 @@ jobs:
           test "$GLIBC_VERSION" = "2.34"
 
       - name: Download Linux binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: built-binaries-linux
           path: downloaded/linux
 
       - name: Download test ISO
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: test-iso
           path: downloaded/test-iso
@@ -378,7 +378,7 @@ jobs:
           test "$(wc -c < out/test-key.dk)" -eq 64
 
       - name: Upload Linux test outputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-outputs-linux-gnu
           path: out/
@@ -396,19 +396,19 @@ jobs:
           sudo apt-get install -y xorriso
 
       - name: Download Linux binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: built-binaries-linux
           path: downloaded/linux
 
       - name: Download Windows binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: built-binaries-windows
           path: downloaded/windows
 
       - name: Download test ISO
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: test-iso
           path: downloaded/test-iso
@@ -519,13 +519,13 @@ jobs:
           test "$manifest_build" = "$actual_build"
 
       - name: Upload direnc test outputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-outputs-linux-direnc
           path: out/
 
       - name: Upload generated encrypted ISO
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: generated-encrypted-iso
           path: out/test-encrypted.iso
@@ -537,13 +537,13 @@ jobs:
 
     steps:
       - name: Download Linux binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: built-binaries-linux
           path: downloaded/linux
 
       - name: Download Windows binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: built-binaries-windows
           path: downloaded/windows
@@ -598,7 +598,7 @@ jobs:
           dist/linux/blake3iso-linux-x86_64-gnu info   dist/ISOB3TOOLS-binaries.iso
 
       - name: Upload packaged artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packaged-artifacts
           path: |
@@ -614,13 +614,13 @@ jobs:
 
     steps:
       - name: Download packaged artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: packaged-artifacts
           path: dist
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ needs.build-linux-ubi.outputs.release_tag }}
           name: ISOB3TOOLS ${{ needs.build-linux-ubi.outputs.release_tag }}
