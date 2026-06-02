@@ -31,11 +31,11 @@ jobs:
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
         with:
           path: ~/.cargo/bin/cargo-audit
-          key: cargo-audit-0.21-${{ runner.os }}
+          key: cargo-audit-0.21.0-${{ runner.os }}
 
       - name: Install cargo-audit
         if: steps.cache_audit.outputs.cache-hit != 'true'
-        run: cargo install cargo-audit --version 0.21 --locked
+        run: cargo install cargo-audit --version 0.21.0 --locked
 
       - name: Run cargo-audit (RustSec advisory database)
         id: cargo_audit
