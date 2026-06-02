@@ -790,7 +790,7 @@ jobs:
             --no-summary \
             scan-targets/ \
             2>&1 | tail -5 | tee clamav-summary.txt || true
-          INFECTED=$(grep -c '.*FOUND$' clamav-infected.txt 2>/dev/null || echo 0)
+          INFECTED=$(grep -c '.*FOUND$' clamav-infected.txt 2>/dev/null) || INFECTED=0
           echo "infected_count=${INFECTED}" >> "$GITHUB_OUTPUT"
           if [ "$INFECTED" -gt 0 ]; then
             echo "::error::ClamAV detected ${INFECTED} infected file(s). See job summary."
