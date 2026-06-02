@@ -24,3 +24,9 @@ target
 fixtures/manual/
 examples/demo-out/
 examples/demo-root/
+
+# .NET helper project outputs
+helper/**/bin/
+helper/**/obj/
+*.user
+*.suo

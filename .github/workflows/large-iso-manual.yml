@@ -8,12 +8,12 @@ on:
         required: true
         type: string
       password:
-        description: "Password to use for isoenc bundling"
+        description: "Password to use for direnc"
         required: true
         default: "secret"
         type: string
       exclude:
-        description: "Comma-separated exclude directories for isoenc"
+        description: "Comma-separated exclude directories for direnc"
         required: false
         default: "./verification/"
         type: string
@@ -56,7 +56,7 @@ jobs:
           unzip -q downloaded/ISOB3TOOLS-windows-x86_64.zip -d testbin/windows
           cp testbin/blake3iso-linux-x86_64-gnu testbin/blake3iso
           cp testbin/discdecrypt-linux-x86_64-gnu testbin/discdecrypt
-          cp testbin/isoenc-linux-x86_64-gnu testbin/isoenc
+          cp testbin/direnc-linux-x86_64-gnu testbin/direnc
           cp testbin/windows/discdecrypt-windows-x86_64.exe testbin/discdecrypt.exe
 
       - name: Prepare binaries
@@ -64,7 +64,7 @@ jobs:
           set -euo pipefail
           chmod +x testbin/blake3iso
           chmod +x testbin/discdecrypt
-          chmod +x testbin/isoenc
+          chmod +x testbin/direnc
 
       - name: Download large ISO
         run: |
@@ -87,33 +87,58 @@ jobs:
           else
             output_name="${iso_name}.encrypted.iso"
           fi
-          output_path="out/$output_name"
 
           echo "LARGE_ISO_INPUT=$input_path" >> "$GITHUB_ENV"
-          echo "LARGE_ISO_OUTPUT=$output_path" >> "$GITHUB_ENV"
+          echo "LARGE_ISO_OUTPUT=out/$output_name" >> "$GITHUB_ENV"
           ls -lh "$input_path"
 
-      - name: Build encrypted ISO from large input
+      - name: Extract large ISO contents
         run: |
           set -euo pipefail
-          testbin/isoenc bundle "$LARGE_ISO_INPUT" \
-            --output "$LARGE_ISO_OUTPUT" \
+          rm -rf out/iso-staging
+          mkdir -p out/iso-staging
+          xorriso -osirrox on -indev "$LARGE_ISO_INPUT" -extract / out/iso-staging
+
+      - name: Encrypt directory with direnc
+        run: |
+          set -euo pipefail
+          testbin/direnc out/iso-staging \
             --password "${{ inputs.password }}" \
-            --exclude "${{ inputs.exclude }}" \
-            --implant-isob3 | tee out/isoenc-large-bundle.txt
+            --exclude "${{ inputs.exclude }}" | tee out/direnc-large.txt
+
+      - name: Rebuild encrypted ISO with xorriso
+        run: |
+          set -euo pipefail
+          xorriso -as mkisofs \
+            -r \
+            -J \
+            -o "$LARGE_ISO_OUTPUT" \
+            out/iso-staging
+
+      - name: Implant ISOB3 into rebuilt ISO
+        run: |
+          set -euo pipefail
+          testbin/blake3iso implant "$LARGE_ISO_OUTPUT" | tee out/direnc-large-implant.txt
 
       - name: Verify rebuilt encrypted ISO
         run: |
           set -euo pipefail
-          testbin/blake3iso check "$LARGE_ISO_OUTPUT" | tee out/isoenc-large-check.txt
-          testbin/blake3iso info "$LARGE_ISO_OUTPUT" | tee out/isoenc-large-info.txt
+          testbin/blake3iso check "$LARGE_ISO_OUTPUT" | tee out/direnc-large-check.txt
+          testbin/blake3iso info "$LARGE_ISO_OUTPUT" | tee out/direnc-large-info.txt
+
+      - name: Confirm bundled decryptors exist in staging directory
+        run: |
+          set -euo pipefail
+          test -f out/iso-staging/decryptor/discdecrypt
+          test -f out/iso-staging/decryptor/discdecrypt.exe
 
       - name: Upload large ISO outputs
         uses: actions/upload-artifact@v4
         with:
           name: large-iso-results
           path: |
-            out/isoenc-large-bundle.txt
-            out/isoenc-large-check.txt
-            out/isoenc-large-info.txt
+            out/direnc-large.txt
+            out/direnc-large-implant.txt
+            out/direnc-large-check.txt
+            out/direnc-large-info.txt
             out/*.encrypted.iso

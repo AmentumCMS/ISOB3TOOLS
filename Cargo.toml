@@ -34,3 +34,7 @@ windows = { version = "0.62.2", features = [
 [[bin]]
 name = "ISOB3GUI"
 path = "src/main.rs"
+
+[[bin]]
+name = "direnc"
+path = "src/bin/direnc.rs"

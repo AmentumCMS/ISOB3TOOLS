@@ -3,10 +3,10 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aes::Aes256;
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
+use aes::{Aes256, Block};
+use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit as CipherKeyInit};
 use aes_gcm::{Aes256Gcm, Nonce as GcmNonce};
+use aes_gcm::aead::KeyInit as AeadKeyInit;
 use chacha20poly1305::aead::AeadInPlace;
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
@@ -333,7 +333,7 @@ fn encrypt_aead_file_to_path(
         let aad = make_aead_aad(&parsed.magic, chunk_index, read as u32);
         let tag_vec = match format {
             DbEncFormat::DbEnc002 => {
-                let cipher = Aes256Gcm::new_from_slice(&parsed.key)
+                let cipher = <Aes256Gcm as AeadKeyInit>::new_from_slice(&parsed.key)
                     .map_err(|e| format!("cipher init failed: {e}"))?;
                 cipher
                     .encrypt_in_place_detached(
@@ -345,7 +345,7 @@ fn encrypt_aead_file_to_path(
                     .to_vec()
             }
             DbEncFormat::DbEnc003 => {
-                let cipher = XChaCha20Poly1305::new_from_slice(&parsed.key)
+                let cipher = <XChaCha20Poly1305 as AeadKeyInit>::new_from_slice(&parsed.key)
                     .map_err(|e| format!("cipher init failed: {e}"))?;
                 cipher
                     .encrypt_in_place_detached(
@@ -610,7 +610,7 @@ where
         .open(temp_path)
         .map_err(|e| format!("failed to create temp file {}: {e}", temp_path.display()))?;
     let cipher =
-        Aes256::new_from_slice(&parsed.enc_key).map_err(|e| format!("cipher init failed: {e}"))?;
+        <Aes256 as CipherKeyInit>::new_from_slice(&parsed.enc_key).map_err(|e| format!("cipher init failed: {e}"))?;
     let mut prev_block = parsed.iv;
     let mut pending = Vec::with_capacity(AEAD_CHUNK_SIZE + AES_BLOCK_SIZE);
     let mut buf = vec![0u8; AEAD_CHUNK_SIZE];
@@ -739,7 +739,7 @@ where
         let mut plaintext = ciphertext_and_tag;
         match &parsed.magic {
             MAGIC_DBENC002 => {
-                let cipher = Aes256Gcm::new_from_slice(&parsed.key)
+                let cipher = <Aes256Gcm as AeadKeyInit>::new_from_slice(&parsed.key)
                     .map_err(|e| format!("cipher init failed: {e}"))?;
                 cipher
                     .decrypt_in_place(
@@ -750,7 +750,7 @@ where
                     .map_err(|_| "password incorrect or file integrity check failed".to_string())?;
             }
             MAGIC_DBENC003 => {
-                let cipher = XChaCha20Poly1305::new_from_slice(&parsed.key)
+                let cipher = <XChaCha20Poly1305 as AeadKeyInit>::new_from_slice(&parsed.key)
                     .map_err(|e| format!("cipher init failed: {e}"))?;
                 cipher
                     .decrypt_in_place(
@@ -789,7 +789,7 @@ fn encrypt_legacy_stream_to_writer(
     parsed: &LegacyHeader,
 ) -> Result<u64, String> {
     let cipher =
-        Aes256::new_from_slice(&parsed.enc_key).map_err(|e| format!("cipher init failed: {e}"))?;
+        <Aes256 as CipherKeyInit>::new_from_slice(&parsed.enc_key).map_err(|e| format!("cipher init failed: {e}"))?;
     let mut prev_block = parsed.iv;
     let mut pending = Vec::with_capacity(AEAD_CHUNK_SIZE + AES_BLOCK_SIZE);
     let mut buf = vec![0u8; AEAD_CHUNK_SIZE];
@@ -919,11 +919,12 @@ fn decrypt_legacy_cbc_block(
     block: &[u8],
     prev_block: &[u8; AES_BLOCK_SIZE],
 ) -> [u8; AES_BLOCK_SIZE] {
-    let mut ga = GenericArray::clone_from_slice(block);
-    cipher.decrypt_block(&mut ga);
+    let arr: [u8; AES_BLOCK_SIZE] = block.try_into().expect("block is 16 bytes");
+    let mut b = Block::from(arr);
+    cipher.decrypt_block(&mut b);
     let mut plaintext = [0u8; AES_BLOCK_SIZE];
     for i in 0..AES_BLOCK_SIZE {
-        plaintext[i] = ga[i] ^ prev_block[i];
+        plaintext[i] = b[i] ^ prev_block[i];
     }
     plaintext
 }
@@ -937,10 +938,10 @@ fn encrypt_legacy_cbc_block(
     for i in 0..AES_BLOCK_SIZE {
         xored[i] = block[i] ^ prev_block[i];
     }
-    let mut ga = GenericArray::clone_from_slice(&xored);
-    cipher.encrypt_block(&mut ga);
+    let mut b = Block::from(xored);
+    cipher.encrypt_block(&mut b);
     let mut ciphertext = [0u8; AES_BLOCK_SIZE];
-    ciphertext.copy_from_slice(&ga);
+    ciphertext.copy_from_slice(&b[..]);
     ciphertext
 }
 
@@ -952,7 +953,7 @@ fn decrypt_legacy_cbc_bytes(
     if cipher_bytes.is_empty() || cipher_bytes.len() % AES_BLOCK_SIZE != 0 {
         return Err("ciphertext length is invalid for AES-CBC".to_string());
     }
-    let cipher = Aes256::new_from_slice(enc_key).map_err(|e| format!("cipher init failed: {e}"))?;
+    let cipher = <Aes256 as CipherKeyInit>::new_from_slice(enc_key).map_err(|e| format!("cipher init failed: {e}"))?;
     let mut prev_block = *iv;
     let mut plaintext = Vec::with_capacity(cipher_bytes.len());
     for chunk in cipher_bytes.chunks_exact(AES_BLOCK_SIZE) {

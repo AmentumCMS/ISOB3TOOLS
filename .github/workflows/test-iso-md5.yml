@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           cargo build --release --bin blake3iso --target x86_64-unknown-linux-gnu
           cargo build --release --bin discdecrypt --target x86_64-unknown-linux-gnu
-          cargo build --release --bin isoenc --target x86_64-unknown-linux-gnu
+          cargo build --release --bin direnc --target x86_64-unknown-linux-gnu
           cargo build --release --bin ISOB3GUI --target x86_64-unknown-linux-gnu
 
       - name: Verify built Linux binaries exist
@@ -60,7 +60,7 @@ jobs:
           set -euo pipefail
           test -f target/x86_64-unknown-linux-gnu/release/blake3iso
           test -f target/x86_64-unknown-linux-gnu/release/discdecrypt
-          test -f target/x86_64-unknown-linux-gnu/release/isoenc
+          test -f target/x86_64-unknown-linux-gnu/release/direnc
           test -f target/x86_64-unknown-linux-gnu/release/ISOB3GUI
 
       - name: Collect Linux binaries
@@ -73,8 +73,8 @@ jobs:
             artifacts/linux/blake3iso-linux-x86_64-gnu
           cp target/x86_64-unknown-linux-gnu/release/discdecrypt \
             artifacts/linux/discdecrypt-linux-x86_64-gnu
-          cp target/x86_64-unknown-linux-gnu/release/isoenc \
-            artifacts/linux/isoenc-linux-x86_64-gnu
+          cp target/x86_64-unknown-linux-gnu/release/direnc \
+            artifacts/linux/direnc-linux-x86_64-gnu
           cp target/x86_64-unknown-linux-gnu/release/ISOB3GUI \
             artifacts/linux/ISOB3GUI-linux-x86_64-gnu
 
@@ -116,6 +116,7 @@ jobs:
           set -euo pipefail
           cargo build --release --bin blake3iso --target x86_64-pc-windows-gnu
           cargo build --release --bin discdecrypt --target x86_64-pc-windows-gnu
+          cargo build --release --bin direnc --target x86_64-pc-windows-gnu
           cargo build --release --bin ISOB3GUI --target x86_64-pc-windows-gnu
 
       - name: Verify built Windows binaries exist
@@ -123,6 +124,7 @@ jobs:
           set -euo pipefail
           test -f target/x86_64-pc-windows-gnu/release/blake3iso.exe
           test -f target/x86_64-pc-windows-gnu/release/discdecrypt.exe
+          test -f target/x86_64-pc-windows-gnu/release/direnc.exe
           test -f target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe
 
       - name: Collect Windows binaries
@@ -135,6 +137,8 @@ jobs:
             artifacts/windows/blake3iso-windows-x86_64.exe
           cp target/x86_64-pc-windows-gnu/release/discdecrypt.exe \
             artifacts/windows/discdecrypt-windows-x86_64.exe
+          cp target/x86_64-pc-windows-gnu/release/direnc.exe \
+            artifacts/windows/direnc-windows-x86_64.exe
           cp target/x86_64-pc-windows-gnu/release/ISOB3GUI.exe \
             artifacts/windows/ISOB3GUI-windows-x86_64.exe
 
@@ -373,10 +377,10 @@ jobs:
           name: test-outputs-linux-gnu
           path: out/
 
-  test-linux-isoenc:
-    name: Test isoenc on Ubuntu
+  test-linux-direnc:
+    name: Test direnc on Ubuntu
     runs-on: ubuntu-latest
-    needs: [build-linux-ubi, make-test-iso]
+    needs: [build-linux-ubi, build-windows, make-test-iso]
 
     steps:
       - name: Install xorriso
@@ -391,6 +395,12 @@ jobs:
           name: built-binaries-linux
           path: downloaded/linux
 
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: built-binaries-windows
+          path: downloaded/windows
+
       - name: Download test ISO
         uses: actions/download-artifact@v4
         with:
@@ -403,76 +413,94 @@ jobs:
           mkdir -p testbin out
           cp downloaded/linux/blake3iso-linux-x86_64-gnu testbin/blake3iso
           cp downloaded/linux/discdecrypt-linux-x86_64-gnu testbin/discdecrypt
-          cp downloaded/linux/isoenc-linux-x86_64-gnu testbin/isoenc
+          cp downloaded/linux/direnc-linux-x86_64-gnu testbin/direnc
+          cp downloaded/windows/discdecrypt-windows-x86_64.exe testbin/discdecrypt.exe
           chmod +x testbin/blake3iso
           chmod +x testbin/discdecrypt
-          chmod +x testbin/isoenc
+          chmod +x testbin/direnc
           cp downloaded/test-iso/test.iso out/test.iso
 
-      - name: Build encrypted ISO from input ISO
+      - name: Extract test ISO contents
         run: |
           set -euo pipefail
-          testbin/isoenc bundle out/test.iso \
-            --output out/test-encrypted.iso \
+          rm -rf out/iso-staging
+          mkdir -p out/iso-staging
+          xorriso -osirrox on -indev out/test.iso -extract / out/iso-staging
+
+      - name: Encrypt directory with direnc
+        run: |
+          set -euo pipefail
+          testbin/direnc out/iso-staging \
             --password secret \
-            --exclude ./verification/ \
-            --implant-isob3 | tee out/isoenc-bundle.txt
+            --exclude ./verification/ | tee out/direnc.txt
+
+      - name: Rebuild encrypted ISO with xorriso
+        run: |
+          set -euo pipefail
+          xorriso -as mkisofs \
+            -r \
+            -J \
+            -o out/test-encrypted.iso \
+            out/iso-staging
+
+      - name: Implant ISOB3 into rebuilt ISO
+        run: |
+          set -euo pipefail
+          testbin/blake3iso implant out/test-encrypted.iso | tee out/direnc-implant.txt
 
       - name: Check rebuilt encrypted ISO ISOB3
         run: |
           set -euo pipefail
-          testbin/blake3iso check out/test-encrypted.iso | tee out/isoenc-check-isob3.txt
-
-      - name: Extract rebuilt encrypted ISO
-        run: |
-          set -euo pipefail
-          rm -rf out/extracted-encrypted
-          mkdir -p out/extracted-encrypted
-          xorriso -osirrox on -indev out/test-encrypted.iso -extract / out/extracted-encrypted
+          testbin/blake3iso check out/test-encrypted.iso | tee out/direnc-check-isob3.txt
 
       - name: Confirm payload files were encrypted in place
         run: |
           set -euo pipefail
-          test -f out/extracted-encrypted/README.txt
-          test -f out/extracted-encrypted/BUILD.txt
-          test -f out/extracted-encrypted/verification/SHA256SUMS
-          test -f out/extracted-encrypted/decryptor/discdecrypt
-          test -f out/extracted-encrypted/decryptor/decrypt.sh
-          test "$(head -c 8 out/extracted-encrypted/README.txt)" = "DBENC003"
-          test "$(head -c 8 out/extracted-encrypted/BUILD.txt)" = "DBENC003"
-          if test "$(head -c 8 out/extracted-encrypted/verification/SHA256SUMS)" = "DBENC003"; then
+          test -f out/iso-staging/README.txt
+          test -f out/iso-staging/BUILD.txt
+          test -f out/iso-staging/verification/SHA256SUMS
+          test -f out/iso-staging/decryptor/discdecrypt
+          test -f out/iso-staging/decryptor/discdecrypt.exe
+          test -f out/iso-staging/decryptor/decrypt.sh
+          test "$(head -c 8 out/iso-staging/README.txt)" = "DBENC003"
+          test "$(head -c 8 out/iso-staging/BUILD.txt)" = "DBENC003"
+          if test "$(head -c 8 out/iso-staging/verification/SHA256SUMS)" = "DBENC003"; then
             echo "Manifest file should not have been encrypted."
             exit 1
           fi
-          if test "$(head -c 8 out/extracted-encrypted/decryptor/discdecrypt)" = "DBENC003"; then
+          if test "$(head -c 8 out/iso-staging/decryptor/discdecrypt)" = "DBENC003"; then
             echo "Embedded decryptor should not have been encrypted."
             exit 1
           fi
+          if test "$(head -c 8 out/iso-staging/decryptor/discdecrypt.exe)" = "DBENC003"; then
+            echo "Embedded Windows decryptor should not have been encrypted."
+            exit 1
+          fi
 
-      - name: Run embedded decryptor against extracted disc contents
+      - name: Run embedded decryptor against staged disc contents
         run: |
           set -euo pipefail
-          chmod +x out/extracted-encrypted/decryptor/discdecrypt
-          out/extracted-encrypted/decryptor/discdecrypt \
-            --input out/extracted-encrypted \
+          chmod +x out/iso-staging/decryptor/discdecrypt
+          out/iso-staging/decryptor/discdecrypt \
+            --input out/iso-staging \
             --output out/decrypted-tree \
             --password secret | tee out/discdecrypt.txt
           test -f out/decrypted-tree/README.txt
           test -f out/decrypted-tree/BUILD.txt
           test -f out/decrypted-tree/verification/SHA256SUMS
 
-      - name: Decrypt encrypted ISO payload files and compare plaintext
+      - name: Decrypt payload files and compare plaintext
         run: |
           set -euo pipefail
-          testbin/blake3iso decrypt out/extracted-encrypted/README.txt --password secret --output out/README.dec.txt | tee out/isoenc-readme-decrypt.txt
-          testbin/blake3iso decrypt out/extracted-encrypted/BUILD.txt --password secret --output out/BUILD.dec.txt | tee out/isoenc-build-decrypt.txt
+          testbin/blake3iso decrypt out/iso-staging/README.txt --password secret --output out/README.dec.txt | tee out/direnc-readme-decrypt.txt
+          testbin/blake3iso decrypt out/iso-staging/BUILD.txt --password secret --output out/BUILD.dec.txt | tee out/direnc-build-decrypt.txt
           printf 'hello from github actions\n' > out/README.expected.txt
           printf 'commit: %s\n' "$GITHUB_SHA" > out/BUILD.expected.txt
           cmp out/README.dec.txt out/README.expected.txt
           cmp out/BUILD.dec.txt out/BUILD.expected.txt
           cmp out/decrypted-tree/README.txt out/README.expected.txt
           cmp out/decrypted-tree/BUILD.txt out/BUILD.expected.txt
-          cmp out/decrypted-tree/verification/SHA256SUMS out/extracted-encrypted/verification/SHA256SUMS
+          cmp out/decrypted-tree/verification/SHA256SUMS out/iso-staging/verification/SHA256SUMS
 
       - name: Confirm decrypted payload hashes still match manifest
         run: |
@@ -481,17 +509,17 @@ jobs:
             cd out
             sha256sum README.dec.txt BUILD.dec.txt > decrypted.hashes
           )
-          manifest_readme="$(awk '/README.txt$/ { print $1 }' out/extracted-encrypted/verification/SHA256SUMS)"
-          manifest_build="$(awk '/BUILD.txt$/ { print $1 }' out/extracted-encrypted/verification/SHA256SUMS)"
+          manifest_readme="$(awk '/README.txt$/ { print $1 }' out/iso-staging/verification/SHA256SUMS)"
+          manifest_build="$(awk '/BUILD.txt$/ { print $1 }' out/iso-staging/verification/SHA256SUMS)"
           actual_readme="$(awk '/README.dec.txt$/ { print $1 }' out/decrypted.hashes)"
           actual_build="$(awk '/BUILD.dec.txt$/ { print $1 }' out/decrypted.hashes)"
           test "$manifest_readme" = "$actual_readme"
           test "$manifest_build" = "$actual_build"
 
-      - name: Upload isoenc test outputs
+      - name: Upload direnc test outputs
         uses: actions/upload-artifact@v4
         with:
-          name: test-outputs-linux-isoenc
+          name: test-outputs-linux-direnc
           path: out/
 
       - name: Upload generated encrypted ISO
@@ -503,7 +531,7 @@ jobs:
   package:
     name: Package release artifacts
     runs-on: ubuntu-latest
-    needs: [build-linux-ubi, test-linux-ubi, test-linux-isoenc, build-windows]
+    needs: [build-linux-ubi, test-linux-ubi, test-linux-direnc, build-windows]
 
     steps:
       - name: Download Linux binaries
@@ -572,7 +600,7 @@ jobs:
     name: Create GitHub release
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: [build-linux-ubi, test-linux-ubi, test-linux-isoenc, build-windows, package]
+    needs: [build-linux-ubi, test-linux-ubi, test-linux-direnc, build-windows, package]
 
     steps:
       - name: Download packaged artifacts

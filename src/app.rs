@@ -38,6 +38,8 @@ pub struct App {
     drives: Vec<DriveSelection>,
     results: Vec<VerificationResult>,
     logs: Vec<String>,
+    log_autoscroll: bool,
+    scroll_log_to_bottom: bool,
 
     show_about: bool,
     drive_details_open: bool,
@@ -72,6 +74,8 @@ impl App {
             drives: Vec::new(),
             results: Vec::new(),
             logs: vec!["Ready.".to_string()],
+            log_autoscroll: true,
+            scroll_log_to_bottom: true,
             show_about: false,
             drive_details_open: false,
             drive_details_target: None,
@@ -109,6 +113,7 @@ impl App {
 
     fn log_line(&mut self, text: impl Into<String>) {
         self.logs.push(text.into());
+        self.scroll_log_to_bottom = true;
     }
 
     fn selected_drives(&self) -> Vec<MediaRoot> {
@@ -651,14 +656,26 @@ impl eframe::App for App {
                 });
 
             ui.separator();
-            ui.heading("Log");
+            ui.horizontal(|ui| {
+                ui.heading("Log");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.checkbox(&mut self.log_autoscroll, "Autoscroll");
+                });
+            });
+            let should_scroll_log = self.log_autoscroll && self.scroll_log_to_bottom;
             egui::ScrollArea::vertical()
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     for line in &self.logs {
                         ui.label(line);
                     }
+                    if should_scroll_log {
+                        ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
+                    }
                 });
+            if self.log_autoscroll {
+                self.scroll_log_to_bottom = false;
+            }
         });
 
         if self.show_about {
@@ -876,4 +893,3 @@ fn human_bytes(num_bytes: u64) -> String {
 
     format!("{num_bytes} B")
 }
-

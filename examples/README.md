@@ -8,14 +8,16 @@ bash examples/linux_encrypted_iso_e2e.sh
 
 What it does:
 
-1. builds `blake3iso`, `discdecrypt`, and `isoenc`
+1. builds `blake3iso`, `discdecrypt`, and `direnc`
 2. creates a small source tree and SHA-256 manifest
-3. builds a plaintext ISO
-4. rebuilds it as an encrypted ISO with `ISOB3`
-5. verifies the rebuilt ISO
-6. extracts it again
-7. decrypts payload files with both `blake3iso` and the embedded `discdecrypt`
-8. compares decrypted plaintext with the original content
+3. builds a plaintext source ISO
+4. extracts it into a staging directory
+5. encrypts the staging directory with `direnc` and injects the decryptor
+6. rebuilds the encrypted ISO with `xorriso`
+7. implants `ISOB3` with `blake3iso`
+8. verifies the rebuilt ISO
+9. decrypts payload files with both `blake3iso` and the embedded `discdecrypt`
+10. compares decrypted plaintext with the original content
 
 Requirements:
 
