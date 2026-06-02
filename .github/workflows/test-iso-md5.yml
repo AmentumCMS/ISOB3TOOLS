@@ -631,11 +631,88 @@ jobs:
             dist/ISOB3TOOLS-windows-x86_64.zip
             dist/ISOB3TOOLS-binaries.iso
 
+  virus-scan:
+    name: Virus scan (ClamAV)
+    runs-on: ubuntu-latest
+    needs: [build-linux-ubi, build-windows, package]
+
+    steps:
+      - name: Download Linux binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: built-binaries-linux
+          path: scan-targets/linux
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: built-binaries-windows
+          path: scan-targets/windows
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: packaged-artifacts
+          path: scan-targets/packaged
+
+      - name: Install ClamAV and update definitions
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clamav
+          sudo systemctl stop clamav-freshclam 2>/dev/null || true
+          sudo freshclam --quiet
+
+      - name: Run ClamAV scan
+        id: clamav
+        run: |
+          set -euo pipefail
+          clamscan \
+            --recursive \
+            --infected \
+            --no-summary \
+            scan-targets/ \
+            | tee clamav-infected.txt || true
+          clamscan \
+            --recursive \
+            --no-summary \
+            scan-targets/ \
+            2>&1 | tail -5 | tee clamav-summary.txt || true
+          INFECTED=$(grep -c '.*FOUND$' clamav-infected.txt 2>/dev/null || echo 0)
+          echo "infected_count=${INFECTED}" >> "$GITHUB_OUTPUT"
+          if [ "$INFECTED" -gt 0 ]; then
+            echo "::error::ClamAV detected ${INFECTED} infected file(s). See job summary."
+            exit 1
+          fi
+
+      - name: ClamAV → job summary
+        if: always()
+        run: |
+          {
+            echo "## 🦠 ClamAV Virus Scan"
+            INFECTED="${{ steps.clamav.outputs.infected_count }}"
+            if [ "${INFECTED:-0}" -eq 0 ] && [ "${{ steps.clamav.outcome }}" = "success" ]; then
+              echo "✅ No threats detected."
+            else
+              echo "❌ **${INFECTED:-unknown} infected file(s) detected.**"
+              echo '```'
+              cat clamav-infected.txt 2>/dev/null || echo "(no output)"
+              echo '```'
+            fi
+            echo ""
+            echo "<details><summary>Scan summary</summary>"
+            echo ""
+            echo '```'
+            cat clamav-summary.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   release:
     name: Create GitHub release
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: [build-linux-ubi, test-linux-ubi, test-linux-direnc, build-windows, package, security-scan]
+    needs: [build-linux-ubi, test-linux-ubi, test-linux-direnc, build-windows, package, security-scan, virus-scan]
 
     steps:
       - name: Download packaged artifacts
