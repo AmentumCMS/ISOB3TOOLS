@@ -1,3 +1,13 @@
+//! SHA-256 manifest parsing and file hashing.
+//!
+//! Supports two manifest line formats:
+//! - **GNU** — `<64-hex-digest>  <filename>` (two spaces, or `*` for binary mode)
+//! - **BSD** — `SHA256 (<filename>) = <64-hex-digest>`
+//!
+//! On Windows, large files are read with `FILE_FLAG_NO_BUFFERING |
+//! FILE_FLAG_SEQUENTIAL_SCAN` to avoid polluting the system page cache.  A
+//! buffered fallback is used if the uncached path fails.
+
 #[cfg(windows)]
 use std::alloc::{Layout, alloc, dealloc};
 use std::fs::File;
@@ -19,20 +29,31 @@ const UNCACHED_ALIGNMENT: usize = 4096;
 #[cfg(windows)]
 const UNCACHED_CHUNK_SIZE: usize = 1024 * 1024;
 
+/// One entry parsed from a SHA-256 manifest file.
 #[derive(Debug, Clone)]
 pub struct Sha256ManifestEntry {
+    /// Path to the manifest file this entry came from.
     pub manifest_path: PathBuf,
+    /// Resolved filesystem path of the file to verify.
     pub target_path: PathBuf,
+    /// Raw filename string as written in the manifest (used for display and error messages).
     pub target_display: String,
+    /// Expected lowercase hex SHA-256 digest.
     pub expected_hex: String,
 }
 
+/// Result of parsing a manifest file.
 #[derive(Debug, Clone)]
 pub struct ParsedManifest {
     pub entries: Vec<Sha256ManifestEntry>,
+    /// Number of non-blank, non-comment lines that could not be parsed.
     pub skipped_lines: usize,
 }
 
+/// Return `true` if the filename looks like a SHA-256 manifest.
+///
+/// Matches common conventions: `sha256sums`, `*.sha256`, `*.sha256sum`,
+/// and any name containing `sha256` or `.sha`.
 pub fn is_sha256_manifest(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -48,12 +69,16 @@ pub fn is_sha256_manifest(path: &Path) -> bool {
         || lower.contains(".sha")
 }
 
+/// Read and parse a plaintext SHA-256 manifest from disk.
 pub fn parse_sha256_manifest(path: &Path) -> Result<ParsedManifest, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read manifest {}: {e}", path.display()))?;
     parse_sha256_manifest_text(path, &text)
 }
 
+/// Parse a SHA-256 manifest from an already-loaded byte slice.
+///
+/// `path` is used only for error messages and to resolve relative target paths.
 pub fn parse_sha256_manifest_bytes(path: &Path, bytes: &[u8]) -> Result<ParsedManifest, String> {
     let text = String::from_utf8(bytes.to_vec())
         .map_err(|_| format!("manifest {} is not valid UTF-8", path.display()))?;
@@ -104,6 +129,11 @@ where
     compute_sha256_with_progress_and_cancel(path, progress, || false)
 }
 
+/// Hash a file with SHA-256, reporting progress and supporting cancellation.
+///
+/// `progress` receives the number of bytes just read on each call.
+/// `should_abort` is polled before every chunk — return `true` to cancel
+/// (the function will return `Err("operation aborted")`).
 pub fn compute_sha256_with_progress_and_cancel<F, G>(
     path: &Path,
     progress: F,
@@ -231,6 +261,8 @@ fn hex_digest(bytes: &[u8]) -> String {
     out
 }
 
+/// Heap-allocated buffer with a guaranteed alignment — required for
+/// `FILE_FLAG_NO_BUFFERING` reads on Windows, which mandate sector-aligned buffers.
 #[cfg(windows)]
 struct AlignedBuffer {
     ptr: *mut u8,

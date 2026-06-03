@@ -1,3 +1,13 @@
+//! Legacy ISOMD5 (isomd5sum) verification support.
+//!
+//! ISOMD5 is a Red Hat-era convention that stores an MD5 checksum inside the
+//! ISO9660 Primary Volume Descriptor's application-use area.  The embedded
+//! `checkisomd5` binary (compiled from the [isomd5sum] project) is shipped as
+//! a compile-time `include_bytes!` asset and extracted to a temp file at
+//! runtime to avoid an external tool dependency.
+//!
+//! [isomd5sum]: https://github.com/rhinstaller/isomd5sum
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
@@ -109,6 +119,8 @@ fn materialize_embedded_checkisomd5() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Return `true` if the ISO at `path` contains legacy ISOMD5 implant markers
+/// in its Primary Volume Descriptor application-use area.
 pub fn has_isomd5sum_implant(path: &Path) -> Result<bool, String> {
     let Some(text) = read_pvd_text(path)? else {
         return Ok(false);
@@ -140,13 +152,23 @@ pub fn info_isomd5sum(path: &Path) -> Result<Option<String>, String> {
     )))
 }
 
+/// Outcome of an ISOMD5 verification attempt.
 #[derive(Debug, Clone)]
 pub enum IsoMd5CheckOutcome {
+    /// `checkisomd5` reported success; contains the MD5 hex digest.
     Valid { digest_hex: String },
+    /// Verification failed or the tool returned a non-zero exit code.
     Invalid(String),
+    /// The embedded `checkisomd5` binary could not be materialized (unsupported OS).
     ToolMissing,
 }
 
+/// Run the embedded `checkisomd5` binary against `path` and return the outcome.
+///
+/// The binary is written to a temp file, executed, then deleted.  Always
+/// returns `Ok` — tool errors are encoded as [`IsoMd5CheckOutcome::Invalid`]
+/// or [`IsoMd5CheckOutcome::ToolMissing`] so the caller can decide how to
+/// present the result.
 pub fn verify_isomd5sum(path: &Path) -> Result<IsoMd5CheckOutcome, String> {
     let checker_path = match materialize_embedded_checkisomd5() {
         Ok(p) => p,

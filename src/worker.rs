@@ -1,3 +1,15 @@
+//! Background worker threads: drive discovery and multi-drive verification.
+//!
+//! Verification runs in two phases:
+//!
+//! 1. **Planning** — each selected drive is walked to find SHA-256 manifests and
+//!    detect embedded ISOB3 targets.  All planned work is reported via
+//!    [`WorkerEvent::JobsReady`] before any hashing starts.
+//!
+//! 2. **Execution** — SHA-256 manifest jobs run first (concurrent across drives),
+//!    then embedded-ISOB3 drive jobs.  Each phase uses [`run_drive_phase`] with a
+//!    bounded worker pool.  Results flow back through an [`mpsc::Sender<WorkerEvent>`].
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,24 +33,36 @@ use crate::sha256sum::{
     parse_sha256_manifest, parse_sha256_manifest_bytes,
 };
 
+/// Outcome of one file-level verification check, sent back to the GUI via the worker channel.
 #[derive(Debug, Clone)]
 pub struct VerificationResult {
+    /// Human-readable name of the drive this result belongs to (e.g. `"D:"`).
     pub drive_name: String,
+    /// What kind of check was performed (e.g. `"SHA256 + ISOB3"`, `"EMBEDDED-ISOB3"`).
     pub check_name: String,
+    /// Display path of the file that was verified.
     pub subject: String,
+    /// Manifest or drive path that named this check.
     pub source: String,
+    /// `true` if the check passed.
     pub ok: bool,
+    /// Multi-line human-readable detail (digest values, error descriptions, etc.).
     pub detail: String,
+    /// Wall-clock seconds consumed by this check.
     pub elapsed_secs: f64,
+    /// Bytes read/processed during this check (used for throughput stats).
     pub processed_bytes: u64,
 }
 
+/// Credentials and flags needed to handle encrypted disc files during verification.
 #[derive(Debug, Clone)]
 pub struct EncryptionSettings {
+    /// Whether encrypted-file support is active at all.
     pub enabled: bool,
+    /// Password for DBENC001–DBENC004 symmetric encryption.
     pub password: String,
-    /// Path to a DBENC005 (ML-KEM-768) private key file (.dk, 64-byte seed).
-    /// When set, PQE-encrypted files are decrypted automatically during verification.
+    /// Path to a DBENC005 (ML-KEM-768) decapsulation-key file (`.dk`, 64-byte seed).
+    /// When set, PQE-encrypted files are decrypted automatically without a password.
     pub private_key_path: Option<PathBuf>,
 }
 
@@ -52,25 +76,37 @@ impl Default for EncryptionSettings {
     }
 }
 
+/// Events sent from background worker threads to the GUI event loop.
 #[derive(Debug)]
 pub enum WorkerEvent {
+    /// Drive discovery finished; contains every discovered removable / optical drive.
     DrivesFound(Vec<MediaRoot>),
+    /// All jobs have been planned; GUI can show the total expected work.
     JobsReady {
         count: usize,
         workers: usize,
         total_bytes: u64,
     },
+    /// A chunk of bytes was hashed; used to advance the progress bar.
     Progress {
         bytes_delta: u64,
     },
+    /// One file-level check completed.
     VerificationResult(VerificationResult),
+    /// The run was cancelled via the abort flag.
     Aborted,
+    /// Informational log message.
     Log(String),
+    /// Unrecoverable worker error (planning or channel failure).
     Fatal(String),
 }
 
+// ── Internal job types ─────────────────────────────────────────────────────────
+
+/// A single unit of verification work dispatched to a worker thread.
 #[derive(Debug, Clone)]
 enum WorkerJob {
+    /// Verify one entry from a SHA-256 manifest file.
     VerifyManifestEntry {
         media: MediaRoot,
         manifest_path: PathBuf,
@@ -79,24 +115,35 @@ enum WorkerJob {
         expected_sha256: String,
         encryption: EncryptionSettings,
     },
+    /// Verify an ISO/device target that carries embedded ISOB3 metadata.
     VerifyEmbeddedDrive {
         media: MediaRoot,
         target_path: PathBuf,
     },
 }
 
+/// All jobs planned for one drive, split into two ordered phases.
 #[derive(Debug, Clone)]
 struct DriveJobs {
+    /// SHA-256 manifest checks (run first, concurrently across drives).
     sha_jobs: Vec<WorkerJob>,
+    /// Embedded ISOB3 drive checks (run second, after all SHA jobs finish).
     embedded_jobs: Vec<WorkerJob>,
 }
 
+/// Intermediate result of decrypting/hashing a target file before comparing
+/// it against the manifest's expected digest.
 struct VerificationInput {
+    /// Lowercase hex SHA-256 of the plaintext content.
     actual_sha256: String,
+    /// Path to a temporary decrypted file, if the source was encrypted.
+    /// Must be cleaned up after the check completes.
     decrypted_path: Option<PathBuf>,
+    /// Total bytes read during this step (ciphertext + plaintext for encrypted files).
     processed_bytes: u64,
 }
 
+/// Byte-count accumulators built during the planning phase for the progress-bar estimate.
 #[derive(Default)]
 struct PlanningTotals {
     manifest_bytes: u64,
@@ -104,17 +151,29 @@ struct PlanningTotals {
     embedded_bytes: u64,
 }
 
+/// What a single [`WorkerJob`] execution produced.
 enum JobOutcome {
     Completed(VerificationResult),
     Aborted,
 }
 
+// ── Public entry points ────────────────────────────────────────────────────────
+
+/// Discover removable and optical drives on the current machine.
+///
+/// Sends a single [`WorkerEvent::DrivesFound`] and returns.  Intended to run
+/// in a dedicated thread spawned by the GUI.
 pub fn discover_drives_worker(tx: Sender<WorkerEvent>) -> Result<(), String> {
     let drives = get_media_roots()?;
     tx.send(WorkerEvent::DrivesFound(drives))
         .map_err(|e| e.to_string())
 }
 
+/// Run all verification work across the given drives.
+///
+/// Sends a stream of [`WorkerEvent`] values (progress, results, logs) and
+/// returns `Ok(())` when finished or when aborted via `cancel`.  Any channel
+/// send failure is treated as fatal and propagated as `Err`.
 pub fn verify_drives_worker(
     tx: Sender<WorkerEvent>,
     selected_drives: Vec<MediaRoot>,
@@ -280,6 +339,13 @@ pub fn verify_drives_worker(
     Ok(())
 }
 
+// ── Execution engine ──────────────────────────────────────────────────────────
+
+/// Run one phase of work (either SHA or embedded ISOB3 jobs) across all drives.
+///
+/// Each element of `drive_batches` is the full job list for one drive.  Jobs
+/// within a batch run sequentially (so one drive uses at most one worker at a
+/// time), but up to `max_workers` drives are processed concurrently.
 fn run_drive_phase(
     tx: &Sender<WorkerEvent>,
     cancel: &Arc<AtomicBool>,
@@ -348,6 +414,10 @@ fn run_drive_phase(
     Ok(())
 }
 
+// ── Planning helpers ──────────────────────────────────────────────────────────
+
+/// Recursively walk `root` and return every file that looks like a SHA-256 manifest,
+/// including encrypted files that decrypt to a manifest when a key/password is available.
 fn find_sha256_manifests(root: &Path, encryption: &EncryptionSettings) -> Vec<PathBuf> {
     WalkDir::new(root)
         .into_iter()
@@ -358,6 +428,9 @@ fn find_sha256_manifests(root: &Path, encryption: &EncryptionSettings) -> Vec<Pa
         .collect()
 }
 
+/// Read a decapsulation-key file and return its bytes as a fixed-size array.
+///
+/// Fails if the file cannot be read or is the wrong size.
 fn load_dk_bytes(path: &Path) -> Result<[u8; PQE_DK_LEN], String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read key failed: {e}"))?;
     if bytes.len() != PQE_DK_LEN {
@@ -372,6 +445,11 @@ fn load_dk_bytes(path: &Path) -> Result<[u8; PQE_DK_LEN], String> {
     Ok(arr)
 }
 
+/// Return `true` if `path` is (or decrypts to) a SHA-256 manifest.
+///
+/// Plaintext manifests are identified by filename heuristics.  Encrypted files
+/// are tentatively decrypted and parsed — a file is accepted if it yields at
+/// least one manifest entry.
 fn is_sha256_manifest_candidate(path: &Path, encryption: &EncryptionSettings) -> bool {
     if is_sha256_manifest(path) {
         return true;
@@ -401,6 +479,12 @@ fn is_sha256_manifest_candidate(path: &Path, encryption: &EncryptionSettings) ->
     }
 }
 
+/// Fully decrypt (if needed) and parse a manifest file into its entries.
+///
+/// Dispatches on the detected encryption format:
+/// - **DBENC005**: decrypts with the private key from `encryption`
+/// - **Other DBENC**: decrypts with the password from `encryption`
+/// - **Plaintext**: parsed directly from disk
 fn load_manifest_entries(
     manifest_path: &Path,
     encryption: &EncryptionSettings,
@@ -442,11 +526,15 @@ fn load_manifest_entries(
     }
 }
 
+/// Quick-decrypt a password-protected file and try to parse it as a manifest.
+/// Used during the planning phase to identify encrypted manifests by content.
 fn encrypted_manifest_probe(manifest_path: &Path, password: &str) -> Result<ParsedManifest, String> {
     let decrypted = decrypt_file(manifest_path, password)?;
     parse_sha256_manifest_bytes(manifest_path, &decrypted.plaintext)
 }
 
+/// Quick-decrypt a PQE (DBENC005) file with the given decapsulation key and try
+/// to parse it as a manifest.  Used during planning to detect PQE-encrypted manifests.
 fn pqe_manifest_probe(path: &Path, dk_bytes: &[u8; PQE_DK_LEN]) -> Result<ParsedManifest, String> {
     let decrypted = decrypt_file_pqe_to_temp_with_cancel(path, dk_bytes, |_| {}, || false)?;
     let plaintext =
@@ -455,6 +543,9 @@ fn pqe_manifest_probe(path: &Path, dk_bytes: &[u8; PQE_DK_LEN]) -> Result<Parsed
     parse_sha256_manifest_bytes(path, &plaintext)
 }
 
+// ── Job dispatch ──────────────────────────────────────────────────────────────
+
+/// Dispatch a single job to the appropriate verification handler.
 fn run_job(job: WorkerJob, tx: &Sender<WorkerEvent>, cancel: &Arc<AtomicBool>) -> JobOutcome {
     match job {
         WorkerJob::VerifyManifestEntry {
@@ -480,6 +571,12 @@ fn run_job(job: WorkerJob, tx: &Sender<WorkerEvent>, cancel: &Arc<AtomicBool>) -
     }
 }
 
+/// Verify one SHA-256 manifest entry end-to-end:
+///
+/// 1. Confirm the target file exists.
+/// 2. Decrypt it (if encrypted) and compute its SHA-256.
+/// 3. Compare against the expected digest from the manifest.
+/// 4. If the digest matches and the file looks like an ISO, also run an ISOB3 check.
 fn verify_manifest_entry(
     media: &MediaRoot,
     manifest_path: &Path,
@@ -608,6 +705,11 @@ fn verify_manifest_entry(
     JobOutcome::Completed(result)
 }
 
+/// Decrypt (if necessary) a target file and compute its plaintext SHA-256.
+///
+/// Returns a [`VerificationInput`] containing the hash, byte counts, and
+/// optionally the path to a temporary decrypted file that must be cleaned up
+/// by the caller once the ISOB3 check is also done.
 fn build_verification_input(
     target_path: &Path,
     encryption: &EncryptionSettings,
@@ -677,6 +779,10 @@ fn build_verification_input(
     }
 }
 
+/// Verify the ISOB3 metadata embedded in a raw disc device or ISO image.
+///
+/// No manifest is involved — the target is inspected directly for its embedded
+/// ISOB3 application-use-area record.
 fn verify_embedded_drive(
     media: &MediaRoot,
     target_path: &Path,
@@ -717,13 +823,22 @@ fn verify_embedded_drive(
     })
 }
 
+/// Outcome of an ISOB3 check against an ISO file or decrypted ISO bytes.
 enum IsoVerification {
+    /// ISOB3 metadata found and digest matched.
     Valid(String),
+    /// ISOB3 metadata not present in the application-use area.
     Missing(String),
+    /// ISOB3 metadata found but digest did not match.
     Invalid(String),
+    /// File was not an ISO; ISOB3 check skipped.
     Skipped(String),
 }
 
+// ── ISOB3 helpers ─────────────────────────────────────────────────────────────
+
+/// Run an ISOB3 check against either an already-decrypted byte slice or a
+/// file/device path.  Skips the check if the target doesn't look like an ISO.
 fn verify_isob3_target(
     path: &Path,
     decrypted_bytes: Option<&[u8]>,
@@ -770,6 +885,9 @@ fn map_check_outcome(result: Result<CheckOutcome, String>) -> IsoVerification {
     }
 }
 
+// ── File-type detection ───────────────────────────────────────────────────────
+
+/// Return `true` if `path` is likely an ISO image or raw optical device.
 fn looks_like_iso_target(path: &Path) -> bool {
     if is_raw_iso_device(path) {
         return true;
@@ -804,6 +922,7 @@ fn is_raw_iso_device(path: &Path) -> bool {
     false
 }
 
+/// Return `true` if `bytes` begins with a valid ISO9660 Primary Volume Descriptor.
 fn looks_like_iso_bytes(bytes: &[u8]) -> bool {
     const PVD_OFFSET: usize = 16 * 2048;
     bytes.len() >= PVD_OFFSET + 7
@@ -812,6 +931,11 @@ fn looks_like_iso_bytes(bytes: &[u8]) -> bool {
         && bytes[PVD_OFFSET + 6] == 1
 }
 
+// ── Byte estimation for progress bar ─────────────────────────────────────────
+
+/// Estimate the bytes that will be processed when loading a manifest file.
+///
+/// Encrypted manifests are counted twice (once to decrypt, once to parse).
 fn estimated_manifest_bytes(path: &Path, encryption: &EncryptionSettings) -> u64 {
     let file_bytes = file_len(path);
     if encryption.enabled && is_encrypted_file(path).unwrap_or(false) {
@@ -821,6 +945,10 @@ fn estimated_manifest_bytes(path: &Path, encryption: &EncryptionSettings) -> u64
     }
 }
 
+/// Estimate the bytes that will be processed when verifying one manifest target.
+///
+/// ISO targets cost an extra pass for the ISOB3 check; encrypted files cost an
+/// extra pass to decrypt.
 fn estimated_manifest_target_bytes(path: &Path, encryption: &EncryptionSettings) -> u64 {
     let file_bytes = file_len(path);
     if encryption.enabled && is_encrypted_file(path).unwrap_or(false) {
@@ -900,6 +1028,7 @@ mod tests {
         let encryption = EncryptionSettings {
             enabled: true,
             password: "secret".to_string(),
+            private_key_path: None,
         };
         let manifests = find_sha256_manifests(&root, &encryption);
 

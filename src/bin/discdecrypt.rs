@@ -1,3 +1,24 @@
+//! `discdecrypt` — decrypt DBENC-encrypted disc files into an output folder.
+//!
+//! ## Modes
+//!
+//! - **GUI mode** (no arguments): launches a minimal egui window with browse
+//!   buttons, a private-key field, and a password field.
+//! - **CLI mode** (any argument present): parsed by `clap`.
+//!
+//! ## Decryption routing
+//!
+//! | Format | Credential needed |
+//! |--------|------------------|
+//! | DBENC001–DBENC004 | `--password` |
+//! | DBENC005 (ML-KEM-768 PQE) | `--private-key` |
+//!
+//! The private key takes priority — if `--private-key` is supplied, the
+//! password is not required (and is silently ignored for DBENC005 files).
+//!
+//! Plaintext files are copied verbatim so the output tree is a complete
+//! decrypted mirror of the input tree.
+
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -112,6 +133,7 @@ fn main() {
     }
 }
 
+/// Platform-appropriate `~/.isob3` directory for key auto-discovery.
 fn default_key_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     let home = std::env::var("USERPROFILE").ok()?;
@@ -120,6 +142,7 @@ fn default_key_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".isob3"))
 }
 
+/// Read a `.dk` decapsulation-key file and return its 64-byte seed.
 fn load_private_key(path: &Path) -> Result<[u8; PQE_DK_LEN], String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
     bytes
@@ -427,6 +450,10 @@ fn browse_folder(title: &str) -> Result<Option<PathBuf>, String> {
     }
 }
 
+/// Walk `input_root`, decrypt every DBENC file, copy plaintext files verbatim,
+/// and write everything to `output_root`.
+///
+/// Returns a summary line (e.g. `"Decrypted 12 file(s); copied 3 plaintext file(s)"`).
 fn run(
     input_root: &Path,
     output_root: &Path,
@@ -538,6 +565,8 @@ fn prompt(label: &str) -> io::Result<String> {
     Ok(value.trim().to_string())
 }
 
+/// Guard against the output directory being inside the input tree, which would
+/// cause files to be decrypted into a location the walker will then try to visit.
 fn ensure_output_outside_input(input_root: &Path, output_root: &Path) -> Result<(), String> {
     let candidate = if output_root.exists() {
         output_root
@@ -561,6 +590,10 @@ fn ensure_output_outside_input(input_root: &Path, output_root: &Path) -> Result<
     Ok(())
 }
 
+/// Return `true` for paths that should not be copied/decrypted.
+///
+/// Currently skips the `decryptor/` directory that some disc layouts place the
+/// `discdecrypt` binary in, to avoid recursing into it.
 fn should_skip(relative: &Path) -> bool {
     relative
         .components()

@@ -1,3 +1,28 @@
+//! ISOB3 metadata implant, check, and removal for ISO9660 images.
+//!
+//! The ISOB3 record is stored in the 512-byte **application-use area** of the
+//! ISO9660 Primary Volume Descriptor (PVD), at byte offset `0x8373`.
+//!
+//! ## Layout of the application-use area (ISOB3APP, v1)
+//!
+//! | Offset | Size | Field            |
+//! |--------|------|-----------------|
+//! | 0      | 8    | Magic `"ISOB3APP"` |
+//! | 8      | 1    | Version (`0x01`) |
+//! | 9      | 1    | Algorithm (`0x01` = BLAKE3-256) |
+//! | 10     | 2    | Digest length LE (`32`) |
+//! | 12     | 4    | Flags LE (reserved, `0`) |
+//! | 16     | 32   | BLAKE3-256 digest |
+//!
+//! The digest is computed with the application-use area itself **zeroed** so
+//! the stored value does not influence the hash.  This is the same normalisation
+//! applied during implant, check, and removal so all three operations agree.
+//!
+//! On Windows raw optical devices (`\\.\CdRomN`) all reads are sector-aligned
+//! because the OS driver rejects unaligned requests.  A retry loop with a short
+//! delay handles transient `ERROR_SEM_TIMEOUT` (121) errors that can occur on
+//! some drives during spin-up.
+
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -23,18 +48,24 @@ const DIGEST_LEN: u16 = 32;
 const READ_RETRY_COUNT: usize = 4;
 const READ_RETRY_DELAY_MS: u64 = 250;
 
+/// Outcome of an ISOB3 integrity check.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum CheckOutcome {
+    /// Stored digest matches the computed digest.
     Valid {
         digest_hex: String,
+        /// Human-readable summary line (e.g. `"ISOB3 valid (aabbcc…)"`).
         detail: String,
     },
+    /// Stored digest does not match the computed digest.
     Invalid {
         expected_hex: String,
         actual_hex: String,
+        /// Human-readable mismatch detail.
         detail: String,
     },
+    /// No ISOB3 record found in the application-use area.
     Missing,
 }
 
@@ -212,6 +243,10 @@ where
     check_iso_with_progress_and_cancel(path, progress, || false)
 }
 
+/// Verify the ISOB3 record embedded in an ISO image or raw optical device.
+///
+/// Returns [`CheckOutcome::Missing`] if no record is present, so the caller
+/// can fall back to ISOMD5 or report "no metadata".
 pub fn check_iso_with_progress_and_cancel<F, G>(
     path: &Path,
     progress: F,
@@ -248,6 +283,10 @@ where
     }
 }
 
+/// Verify ISOB3 metadata directly against an in-memory ISO byte slice.
+///
+/// Used when a file has already been decrypted into memory and the caller
+/// wants to avoid writing it back to disk before checking.
 pub fn check_iso_bytes(bytes: &[u8]) -> Result<CheckOutcome, String> {
     if bytes.len() < (PVD_OFFSET as usize + 7) {
         return Err("file too small to contain an ISO9660 primary volume descriptor".to_string());
@@ -286,6 +325,11 @@ pub fn check_iso_bytes(bytes: &[u8]) -> Result<CheckOutcome, String> {
     }
 }
 
+/// Estimate the total byte size of an ISO image from its PVD volume-space field.
+///
+/// Used to populate the progress bar before hashing begins.  The estimate is
+/// `sector_count × 2048`; it may differ slightly from the actual file size due
+/// to trailing padding or raw-device sector overhead.
 pub fn estimate_iso_bytes(path: &Path) -> Result<u64, String> {
     let mut pvd = [0u8; PVD_SIZE];
     read_exact_at(path, PVD_OFFSET, &mut pvd)?;

@@ -1,3 +1,10 @@
+//! Drive discovery: enumerates removable and optical media on Windows and Linux.
+//!
+//! The public surface is a single function, [`get_media_roots`], which returns
+//! a [`Vec<MediaRoot>`] describing every candidate drive.  The implementation
+//! is platform-specific — Windows uses `GetDriveTypeW` and `QueryDosDeviceW`;
+//! Linux parses `lsblk -J` output.
+
 use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
@@ -6,13 +13,23 @@ use std::process::Command;
 #[cfg(target_os = "linux")]
 use serde::Deserialize;
 
+/// One discovered removable or optical drive.
 #[derive(Debug, Clone)]
 pub struct MediaRoot {
+    /// Directory to walk when looking for SHA-256 manifests (the mount point).
     pub search_root: PathBuf,
+    /// Short human-readable label shown in the GUI (e.g. `"D:"` or `/media/cdrom`).
     pub display_name: String,
+    /// Raw device path for optical drives, used for the embedded ISOB3 check
+    /// (e.g. `\\.\CdRom0` on Windows, `/dev/sr0` on Linux).  `None` for USB drives.
     pub embedded_target: Option<PathBuf>,
 }
 
+// ── Windows ───────────────────────────────────────────────────────────────────
+
+/// Resolve a drive letter to its underlying `\\.\CdRomN` device path so the
+/// ISOB3 checker can read raw optical sectors.  Returns `None` for non-optical
+/// devices or if the query fails.
 #[cfg(windows)]
 fn drive_letter_to_cdrom_device(letter: char) -> Option<String> {
     use windows::Win32::Storage::FileSystem::QueryDosDeviceW;
@@ -40,6 +57,8 @@ fn drive_letter_to_cdrom_device(letter: char) -> Option<String> {
     None
 }
 
+/// Enumerate every drive letter that is removable (`DRIVE_REMOVABLE`) or
+/// optical (`DRIVE_CDROM`) and build a [`MediaRoot`] for each.
 #[cfg(windows)]
 fn get_windows_media_roots() -> Vec<MediaRoot> {
     use windows::Win32::Storage::FileSystem::GetDriveTypeW;
@@ -98,6 +117,12 @@ struct LsblkDevice {
     children: Option<Vec<LsblkDevice>>,
 }
 
+// ── Linux ─────────────────────────────────────────────────────────────────────
+
+/// Enumerate removable USB and optical drives via `lsblk -J`.
+///
+/// Returns an empty list (rather than an error) if `lsblk` is unavailable or
+/// fails, so the GUI degrades gracefully on unusual Linux configurations.
 #[cfg(target_os = "linux")]
 fn get_linux_media_roots() -> Vec<MediaRoot> {
     let mut roots = Vec::new();
@@ -155,6 +180,11 @@ fn get_linux_media_roots() -> Vec<MediaRoot> {
     dedup_media_roots(roots)
 }
 
+// ── Shared utilities ──────────────────────────────────────────────────────────
+
+/// Remove duplicate drives that resolve to the same canonical path.
+///
+/// This can happen on Linux when a device has multiple symlinks.
 #[cfg(any(windows, target_os = "linux"))]
 fn dedup_media_roots(roots: Vec<MediaRoot>) -> Vec<MediaRoot> {
     let mut seen = std::collections::HashSet::new();
@@ -176,16 +206,26 @@ fn dedup_media_roots(roots: Vec<MediaRoot>) -> Vec<MediaRoot> {
     out
 }
 
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Return all removable and optical drives visible on this machine.
+///
+/// The result is platform-specific:
+/// - **Windows** — scans drive letters A–Z via `GetDriveTypeW`
+/// - **Linux** — parses `lsblk -J`
+/// - **Other** — returns `Err`
 #[cfg(windows)]
 pub fn get_media_roots() -> Result<Vec<MediaRoot>, String> {
     Ok(get_windows_media_roots())
 }
 
+/// See [`get_media_roots`] above.
 #[cfg(target_os = "linux")]
 pub fn get_media_roots() -> Result<Vec<MediaRoot>, String> {
     Ok(get_linux_media_roots())
 }
 
+/// See [`get_media_roots`] above.
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn get_media_roots() -> Result<Vec<MediaRoot>, String> {
     Err("Unsupported OS".to_string())
