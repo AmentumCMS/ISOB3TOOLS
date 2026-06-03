@@ -131,9 +131,9 @@ fn prompt(label: &str) -> io::Result<String> {
     Ok(value.trim().to_string())
 }
 
-/// Read a ML-KEM-768 encapsulation key from `path`, returning the raw 1184-byte array.
+/// Read an ML-KEM-768 encapsulation key from `path`, returning the raw 1184-byte array.
 fn load_public_key(path: &PathBuf) -> Result<[u8; PQE_EK_LEN], String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
+    let bytes = fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
     bytes
         .as_slice()
         .try_into()

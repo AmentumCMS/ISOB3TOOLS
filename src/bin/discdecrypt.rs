@@ -16,7 +16,7 @@
 //! The private key takes priority — if `--private-key` is supplied, the
 //! password is not required (and is silently ignored for DBENC005 files).
 //!
-//! Plaintext files are copied verbatim so the output tree is a complete
+//! Plaintext files are copied verbatim so the output tree is a completely
 //! decrypted mirror of the input tree.
 
 use std::fs;
@@ -144,7 +144,7 @@ fn default_key_dir() -> Option<PathBuf> {
 
 /// Read a `.dk` decapsulation-key file and return its 64-byte seed.
 fn load_private_key(path: &Path) -> Result<[u8; PQE_DK_LEN], String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
+    let bytes = fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
     bytes
         .as_slice()
         .try_into()
@@ -276,7 +276,7 @@ impl eframe::App for DiscDecryptApp {
                 );
                 // Live existence indicator
                 if !self.private_key_input.trim().is_empty() {
-                    if std::path::Path::new(self.private_key_input.trim()).exists() {
+                    if Path::new(self.private_key_input.trim()).exists() {
                         ui.colored_label(egui::Color32::GREEN, "✔ found");
                     } else {
                         ui.colored_label(egui::Color32::RED, "✘ not found");
@@ -363,7 +363,7 @@ impl DiscDecryptApp {
 
         // Resolve private key — required if set, otherwise fall back to password
         let private_key: Option<[u8; PQE_DK_LEN]> = if !dk_path_str.is_empty() {
-            match load_private_key(std::path::Path::new(&dk_path_str)) {
+            match load_private_key(Path::new(&dk_path_str)) {
                 Ok(k) => Some(k),
                 Err(e) => {
                     self.status = format!("ERROR: {e}");
@@ -592,7 +592,7 @@ fn ensure_output_outside_input(input_root: &Path, output_root: &Path) -> Result<
 
 /// Return `true` for paths that should not be copied/decrypted.
 ///
-/// Currently skips the `decryptor/` directory that some disc layouts place the
+/// Currently, it skips the `decryptor/` directory that some disc layouts place the
 /// `discdecrypt` binary in, to avoid recursing into it.
 fn should_skip(relative: &Path) -> bool {
     relative

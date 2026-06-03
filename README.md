@@ -4,12 +4,12 @@ Rust tools for ISO integrity verification, embedded ISOB3 (BLAKE3) metadata, SHA
 
 ## Tools
 
-| Binary | Description | Docs |
-|---|---|---|
-| `ISOB3GUI` | Desktop app for scanning and verifying removable media and optical discs | [docs/ISOB3GUI.md](docs/ISOB3GUI.md) |
-| `blake3iso` | CLI for ISOB3 implant, check, info, and remove | [docs/blake3iso.md](docs/blake3iso.md) |
-| `direnc` | Encrypts a directory in place and injects the decryptor, ready for `xorriso` | [docs/direnc.md](docs/direnc.md) |
-| `discdecrypt` | Decrypts a DBENC disc tree into an output folder (CLI + GUI) | [docs/discdecrypt.md](docs/discdecrypt.md) |
+| Binary        | Description                                                                  | Docs                                       |
+|---------------|------------------------------------------------------------------------------|--------------------------------------------|
+| `ISOB3GUI`    | Desktop app for scanning and verifying removable media and optical discs     | [docs/ISOB3GUI.md](docs/ISOB3GUI.md)       |
+| `blake3iso`   | CLI for ISOB3 implant, check, info, and remove                               | [docs/blake3iso.md](docs/blake3iso.md)     |
+| `direnc`      | Encrypts a directory in place and injects the decryptor, ready for `xorriso` | [docs/direnc.md](docs/direnc.md)           |
+| `discdecrypt` | Decrypts a DBENC disc tree into an output folder (CLI + GUI)                 | [docs/discdecrypt.md](docs/discdecrypt.md) |
 
 ## Platforms
 
@@ -61,13 +61,13 @@ See [docs/discdecrypt.md](docs/discdecrypt.md) for CLI reference and GUI mode.
 
 ## Encryption Formats
 
-| Name | ID | Algorithm |
-|---|---|---|
-| `argon2id` | DBENC004 | Argon2id + XChaCha20-Poly1305 — **default** (password) |
+| Name            | ID       | Algorithm                                                  |
+|-----------------|----------|------------------------------------------------------------|
+| `argon2id`      | DBENC004 | Argon2id + XChaCha20-Poly1305 — **default** (password)     |
 | `pqe-xchacha20` | DBENC005 | ML-KEM-768 + XChaCha20-Poly1305 — **default** (public key) |
-| `xchacha20` | DBENC003 | XChaCha20-Poly1305 + PBKDF2-HMAC-SHA256 |
-| `aes-gcm` | DBENC002 | AES-256-GCM + PBKDF2-HMAC-SHA256 |
-| `legacy-cbc` | DBENC001 | AES-256-CBC + HMAC-SHA256 |
+| `xchacha20`     | DBENC003 | XChaCha20-Poly1305 + PBKDF2-HMAC-SHA256                    |
+| `aes-gcm`       | DBENC002 | AES-256-GCM + PBKDF2-HMAC-SHA256                           |
+| `legacy-cbc`    | DBENC001 | AES-256-CBC + HMAC-SHA256                                  |
 
 ## ISOB3 Metadata
 
@@ -80,11 +80,11 @@ Embedded ISOB3 metadata is stored in the ISO9660 Primary Volume Descriptor appli
 
 ## Exit Codes
 
-| Code | Meaning |
-|---|---|
-| `0` | Valid / success |
-| `1` | Invalid (integrity check failed) |
-| `2` | Operational error or missing metadata |
+| Code | Meaning                               |
+|------|---------------------------------------|
+| `0`  | Valid / success                       |
+| `1`  | Invalid (integrity check failed)      |
+| `2`  | Operational error or missing metadata |
 
 ## Examples
 
