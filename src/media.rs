@@ -152,14 +152,12 @@ fn get_linux_media_roots() -> Vec<MediaRoot> {
                                 embedded_target: path.map(PathBuf::from),
                             });
                         }
-                    } else if is_usb {
-                        if let Some(mp) = mountpoint {
-                            roots.push(MediaRoot {
-                                search_root: PathBuf::from(mp),
-                                display_name: mp.to_string(),
-                                embedded_target: None,
-                            });
-                        }
+                    } else if is_usb && let Some(mp) = mountpoint {
+                        roots.push(MediaRoot {
+                            search_root: PathBuf::from(mp),
+                            display_name: mp.to_string(),
+                            embedded_target: None,
+                        });
                     }
 
                     if let Some(children) = &dev.children {
