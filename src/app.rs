@@ -669,6 +669,7 @@ impl eframe::App for App {
             ui.separator();
 
             egui::ScrollArea::vertical()
+                .id_salt("results_scroll")
                 .max_height(300.0)
                 .show(ui, |ui| {
                     egui::Grid::new("results_grid")
@@ -717,20 +718,15 @@ impl eframe::App for App {
                     ui.checkbox(&mut self.log_autoscroll, "Autoscroll");
                 });
             });
-            let should_scroll_log = self.log_autoscroll && self.scroll_log_to_bottom;
             egui::ScrollArea::vertical()
-                .stick_to_bottom(true)
+                .id_salt("log_scroll")
+                .stick_to_bottom(self.log_autoscroll)
                 .show(ui, |ui| {
                     for line in &self.logs {
                         ui.label(line);
                     }
-                    if should_scroll_log {
-                        ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
-                    }
                 });
-            if self.log_autoscroll {
-                self.scroll_log_to_bottom = false;
-            }
+            self.scroll_log_to_bottom = false;
         });
 
         if self.show_about {
