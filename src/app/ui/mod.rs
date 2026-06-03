@@ -73,9 +73,6 @@ pub fn render(app: &mut App, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
             .show_inside(ui, |ui| {
                 panels::show_drives(app, ui);
             });
-
-        // Any leftover space becomes empty filler so the layout stays stable.
-        egui::CentralPanel::default().show_inside(ui, |_ui| {});
     });
 
     // ── Floating dialogs ──────────────────────────────────────────────────────
