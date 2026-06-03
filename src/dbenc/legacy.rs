@@ -19,7 +19,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use aes::{Aes256, Block};
-use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit as CipherKeyInit};
+use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit as CipherKeyInit};
 use hmac::{KeyInit as HmacKeyInit, Mac};
 use sha2::{Digest, Sha256};
 
