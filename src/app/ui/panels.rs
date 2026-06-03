@@ -226,6 +226,8 @@ pub fn show_drive_details(app: &mut App, ctx: &egui::Context) {
         .open(&mut is_open)
         .resizable(true)
         .default_size([screen.width() * 0.8, screen.height() * 0.6])
+        .min_size([360.0, 220.0])
+        .max_size([screen.width(), screen.height()])
         .show(ctx, |ui| {
             let Some(drive_name) = app.drive_details_target.as_deref() else {
                 ui.label("No drive selected.");
@@ -246,35 +248,48 @@ pub fn show_drive_details(app: &mut App, ctx: &egui::Context) {
                 return;
             }
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                egui::Grid::new("drive_detail_grid")
-                    .striped(true)
-                    .min_col_width(90.0)
-                    .show(ui, |ui| {
-                        ui.strong("Check");
-                        ui.strong("Subject");
-                        ui.strong("Source");
-                        ui.strong("Status");
-                        ui.strong("Bytes");
-                        ui.strong("Check Time");
-                        ui.strong("Detail");
-                        ui.end_row();
-
-                        for row in matching {
-                            ui.label(&row.check_name);
-                            ui.label(&row.subject);
-                            ui.label(&row.source);
-                            ui.colored_label(
-                                if row.ok { egui::Color32::GREEN } else { egui::Color32::RED },
-                                if row.ok { "PASS" } else { "FAIL" },
-                            );
-                            ui.label(human_bytes(row.processed_bytes));
-                            ui.label(format!("{:.2}s", row.elapsed_secs));
-                            ui.label(&row.detail);
+            // `both()` + `auto_shrink(false)` lets the scroll area fill the
+            // window so it can actually be resized. A Window can never shrink
+            // below its content's min size, and a default ScrollArea reports its
+            // full content as that min size — so the window grows to fit the
+            // grid instead of scrolling, and can't be made smaller. Filling the
+            // window bounds the scroll viewport: the window now resizes freely
+            // and wide/tall content scrolls within it.
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Grid::new("drive_detail_grid")
+                        .striped(true)
+                        .min_col_width(90.0)
+                        .show(ui, |ui| {
+                            ui.strong("Check");
+                            ui.strong("Subject");
+                            ui.strong("Source");
+                            ui.strong("Status");
+                            ui.strong("Bytes");
+                            ui.strong("Check Time");
+                            ui.strong("Detail");
                             ui.end_row();
-                        }
-                    });
-            });
+
+                            for row in matching {
+                                ui.label(&row.check_name);
+                                ui.label(&row.subject);
+                                ui.label(&row.source);
+                                ui.colored_label(
+                                    if row.ok {
+                                        egui::Color32::GREEN
+                                    } else {
+                                        egui::Color32::RED
+                                    },
+                                    if row.ok { "PASS" } else { "FAIL" },
+                                );
+                                ui.label(human_bytes(row.processed_bytes));
+                                ui.label(format!("{:.2}s", row.elapsed_secs));
+                                ui.label(&row.detail);
+                                ui.end_row();
+                            }
+                        });
+                });
         });
 
     app.drive_details_open = is_open;
