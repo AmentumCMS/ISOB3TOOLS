@@ -64,10 +64,18 @@ pub fn render(app: &mut App, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
                 panels::show_results(app, ui);
             });
 
-        // Drive-selection panel fills the remaining space.
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            panels::show_drives(app, ui);
-        });
+        // Drive-selection panel — capped so it doesn't consume the whole window
+        // when the drive list is short (max ~5 rows visible, then scrolls).
+        egui::Panel::top("drives_panel")
+            .resizable(true)
+            .min_size(60.0)
+            .max_size(200.0)
+            .show_inside(ui, |ui| {
+                panels::show_drives(app, ui);
+            });
+
+        // Any leftover space becomes empty filler so the layout stays stable.
+        egui::CentralPanel::default().show_inside(ui, |_ui| {});
     });
 
     // ── Floating dialogs ──────────────────────────────────────────────────────
