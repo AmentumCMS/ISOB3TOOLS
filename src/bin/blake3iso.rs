@@ -12,7 +12,7 @@
 //!
 //! Exit codes: `0` = success/valid, `1` = check failed, `2` = error.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
@@ -87,7 +87,7 @@ fn run_keygen(output: Option<&PathBuf>) -> Result<String, String> {
 /// Run integrity verification on `file`, trying ISOB3 first and ISOMD5 as fallback.
 ///
 /// Returns `(exit_code, message)` where exit code 0 = valid, 1 = invalid, 2 = error.
-fn run_check(file: &PathBuf) -> (i32, String) {
+fn run_check(file: &Path) -> (i32, String) {
     match check_iso(file) {
         Ok(CheckOutcome::Valid { detail, .. }) => (0, detail),
         Ok(CheckOutcome::Invalid { detail, .. }) => (1, detail),
@@ -114,7 +114,7 @@ fn run_check(file: &PathBuf) -> (i32, String) {
 /// Print embedded metadata from `file` without re-hashing the content.
 ///
 /// Returns `(exit_code, message)` where exit code 0 = info found, 2 = error.
-fn run_info(file: &PathBuf) -> (i32, String) {
+fn run_info(file: &Path) -> (i32, String) {
     match info_iso(file) {
         Ok(msg) if msg != "No ISOB3 metadata found." => (0, msg),
         Ok(_) => match info_isomd5sum(file) {

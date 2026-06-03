@@ -428,12 +428,11 @@ pub(super) fn fill_random(buf: &mut [u8]) -> Result<(), String> {
 
 /// Create all missing parent directories for `path`.
 pub(super) fn ensure_parent_dir(path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("create directory failed: {e}"))?;
         }
-    }
     Ok(())
 }
 

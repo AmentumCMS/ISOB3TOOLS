@@ -242,11 +242,10 @@ fn show_keygen(app: &mut App, ctx: &egui::Context) {
         app.keygen_status = Some(keys::run_keygen(&app.keygen_prefix_input));
 
         // Autoload the new .dk into the key field if nothing is set yet.
-        if let Some(Ok(_)) = &app.keygen_status {
-            if app.private_key_input.is_empty() {
+        if let Some(Ok(_)) = &app.keygen_status
+            && app.private_key_input.is_empty() {
                 app.private_key_input = format!("{}.dk", app.keygen_prefix_input);
             }
-        }
     }
 
     if close_clicked {

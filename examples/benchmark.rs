@@ -9,7 +9,7 @@ use clap::Parser;
 use md5::{Digest, Md5};
 
 const CHUNK_SIZES: [usize; 1] = [
-    1 * 1024 * 1024, // 1 MiB
+    1024 * 1024, // 1 MiB
                      // 2 * 1024 * 1024,       // 2 MiB
                      // 3 * 1024 * 1024,       // 3 MiB
                      // 4 * 1024 * 1024,       // 4 MiB

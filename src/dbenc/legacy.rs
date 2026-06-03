@@ -238,7 +238,7 @@ where
     F: FnMut(u64),
     G: FnMut() -> bool,
 {
-    if cipher_bytes == 0 || cipher_bytes % AES_BLOCK_SIZE as u64 != 0 {
+    if cipher_bytes == 0 || !cipher_bytes.is_multiple_of(AES_BLOCK_SIZE as u64) {
         return Err("ciphertext length is invalid for AES-CBC".to_string());
     }
     let temp_path = make_temp_path("dbenc001-dec", Some(path));
@@ -299,7 +299,7 @@ where
             let block = pending[..AES_BLOCK_SIZE].to_vec();
             let plaintext_block = decrypt_legacy_cbc_block(&cipher, &block, &prev_block);
             writer.write_all(&plaintext_block).map_err(|e| format!("temp write failed: {e}"))?;
-            sha.update(&plaintext_block);
+            sha.update(plaintext_block);
             plaintext_bytes += plaintext_block.len() as u64;
             progress(plaintext_block.len() as u64);
             prev_block.copy_from_slice(&block);
@@ -425,7 +425,7 @@ fn decrypt_legacy_cbc_bytes(
     enc_key: &[u8; 32],
     iv: &[u8; LEGACY_IV_LEN],
 ) -> Result<(Vec<u8>, u64), String> {
-    if cipher_bytes.is_empty() || cipher_bytes.len() % AES_BLOCK_SIZE != 0 {
+    if cipher_bytes.is_empty() || !cipher_bytes.len().is_multiple_of(AES_BLOCK_SIZE) {
         return Err("ciphertext length is invalid for AES-CBC".to_string());
     }
     let cipher = <Aes256 as CipherKeyInit>::new_from_slice(enc_key)

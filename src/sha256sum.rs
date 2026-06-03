@@ -148,8 +148,8 @@ where
         let mut progress = progress;
         let mut should_abort = should_abort;
 
-        return compute_sha256_uncached_windows(path, &mut progress, &mut should_abort)
-            .or_else(|_| compute_sha256_buffered(path, progress, should_abort));
+        compute_sha256_uncached_windows(path, &mut progress, &mut should_abort)
+            .or_else(|_| compute_sha256_buffered(path, progress, should_abort))
     }
 
     #[cfg(not(windows))]

@@ -243,9 +243,9 @@ where
         writer.flush().map_err(|e| format!("temp flush failed: {e}"))
     })();
 
-    if result.is_err() {
+    if let Err(e) = result {
         cleanup_temp_file(&temp_path);
-        return Err(result.unwrap_err());
+        return Err(e);
     }
 
     Ok(DecryptedTempFile {

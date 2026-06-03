@@ -54,6 +54,7 @@ pub struct VerificationResult {
 
 /// Credentials and flags needed to handle encrypted disc files during verification.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct EncryptionSettings {
     /// Whether encrypted-file support is active at all.
     pub enabled: bool,
@@ -64,15 +65,6 @@ pub struct EncryptionSettings {
     pub private_key_path: Option<PathBuf>,
 }
 
-impl Default for EncryptionSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            password: String::new(),
-            private_key_path: None,
-        }
-    }
-}
 
 /// Events sent from background worker threads to the GUI event loop.
 #[derive(Debug)]

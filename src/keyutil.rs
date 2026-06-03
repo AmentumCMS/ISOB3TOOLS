@@ -44,21 +44,20 @@ pub fn resolve_private_key_path(input: &str) -> Option<PathBuf> {
 /// Parent directories are created automatically.
 /// Returns a human-readable success message or an error description.
 pub fn run_keygen(prefix: &Path) -> Result<String, String> {
-    if let Some(parent) = prefix.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = prefix.parent()
+        && !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("create directory failed: {e}"))?;
         }
-    }
 
     let (ek_bytes, dk_bytes) = generate_pqe_keypair()?;
 
     let ek_path = prefix.with_extension("ek");
     let dk_path = prefix.with_extension("dk");
 
-    std::fs::write(&ek_path, &ek_bytes)
+    std::fs::write(&ek_path, ek_bytes)
         .map_err(|e| format!("write {}: {e}", ek_path.display()))?;
-    std::fs::write(&dk_path, &dk_bytes)
+    std::fs::write(&dk_path, dk_bytes)
         .map_err(|e| format!("write {}: {e}", dk_path.display()))?;
 
     Ok(format!(

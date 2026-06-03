@@ -199,13 +199,12 @@ impl eframe::App for DiscDecryptApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        if let Some(rx) = &self.rx {
-            if let Ok(result) = rx.try_recv() {
+        if let Some(rx) = &self.rx
+            && let Ok(result) = rx.try_recv() {
                 self.running = false;
                 self.rx = None;
                 self.status = result.unwrap_or_else(|err| format!("ERROR: {err}"));
             }
-        }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.heading("Disc Decryptor");

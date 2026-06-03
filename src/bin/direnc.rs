@@ -63,6 +63,11 @@ struct Cli {
 
 /// Resolved encryption credential — either a password string or a raw ML-KEM-768
 /// encapsulation key loaded from a `.ek` file.
+///
+/// The `PublicKey` variant is ~1184 bytes, but this enum is constructed exactly
+/// once per CLI invocation and never stored in bulk, so boxing it to shrink the
+/// enum would only add indirection for no practical benefit.
+#[allow(clippy::large_enum_variant)]
 enum EncKey {
     Password(String),
     PublicKey([u8; PQE_EK_LEN]),
@@ -108,12 +113,11 @@ fn resolve_enc_key(password: Option<String>, public_key: Option<PathBuf>) -> Res
     if let Some(pw) = password {
         return Ok(EncKey::Password(pw));
     }
-    if let Some(default_ek) = keyutil::default_key_dir().map(|d| d.join("default.ek")) {
-        if default_ek.is_file() {
+    if let Some(default_ek) = keyutil::default_key_dir().map(|d| d.join("default.ek"))
+        && default_ek.is_file() {
             eprintln!("Using default encapsulation key: {}", default_ek.display());
             return Ok(EncKey::PublicKey(load_public_key(&default_ek)?));
         }
-    }
     // Fall back to password prompt
     match prompt("Password") {
         Ok(pw) if !pw.is_empty() => Ok(EncKey::Password(pw)),

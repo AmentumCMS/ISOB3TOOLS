@@ -153,7 +153,7 @@ fn show_key_row(app: &mut App, ui: &mut egui::Ui) {
         #[cfg(windows)]
         {
             let browsing = app.pending_dk_browse.is_some();
-            let label = if browsing { "Browse…" } else { "Browse…" };
+            let label = if browsing { "Browsing…" } else { "Browse…" };
             if ui.add_enabled(!browsing, egui::Button::new(label)).clicked() {
                 app.pending_dk_browse = Some(keys::browse_dk_file_async());
             }
