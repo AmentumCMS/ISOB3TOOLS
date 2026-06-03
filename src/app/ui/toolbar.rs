@@ -100,6 +100,30 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 /// Render the private-key path input, existence indicator, Browse button,
 /// and "Generate Keypair" button.
 fn show_key_row(app: &mut App, ui: &mut egui::Ui) {
+    // ── Poll the background browse thread ─────────────────────────────────────
+    // Check every frame (cheap — just a non-blocking try_recv).  When the
+    // dialog thread sends a result, apply it and drop the receiver.
+    if let Some(rx) = &app.pending_dk_browse {
+        match rx.try_recv() {
+            Ok(Some(path)) => {
+                app.private_key_input = path;
+                app.pending_dk_browse = None;
+            }
+            Ok(None) => {
+                // User cancelled — just clear the pending state.
+                app.pending_dk_browse = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // Dialog still open — keep requesting repaints so we poll again.
+                ui.ctx().request_repaint();
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                // Thread exited without sending (shouldn't happen).
+                app.pending_dk_browse = None;
+            }
+        }
+    }
+
     ui.horizontal(|ui| {
         ui.label("🔑 Private key (.dk):");
 
@@ -124,11 +148,14 @@ fn show_key_row(app: &mut App, ui: &mut egui::Ui) {
                 .desired_width(key_input_width),
         );
 
-        // Native file picker (Windows only)
+        // Native file picker (Windows only).
+        // The dialog runs on a background thread so the UI stays responsive.
         #[cfg(windows)]
-        if ui.button("Browse…").clicked() {
-            if let Some(path) = keys::browse_dk_file() {
-                app.private_key_input = path;
+        {
+            let browsing = app.pending_dk_browse.is_some();
+            let label = if browsing { "Browse…" } else { "Browse…" };
+            if ui.add_enabled(!browsing, egui::Button::new(label)).clicked() {
+                app.pending_dk_browse = Some(keys::browse_dk_file_async());
             }
         }
 

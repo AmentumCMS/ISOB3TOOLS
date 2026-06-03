@@ -34,11 +34,25 @@ pub fn run_keygen(prefix: &str) -> Result<String, String> {
 
 // ── Native file picker ─────────────────────────────────────────────────────────
 
-/// Open a native file-picker dialog for `.dk` files and return the chosen path.
+/// Spawn the native `.dk` file-picker on a background thread and return a
+/// one-shot receiver.  The receiver yields `Some(path)` when the user confirms
+/// a selection, or `None` when they cancel.
 ///
-/// On Windows this invokes PowerShell's `OpenFileDialog` (via `-STA`).
-/// On other platforms the feature is not yet implemented and returns `None`.
-pub fn browse_dk_file() -> Option<String> {
+/// **Must not be called on the render thread directly** — the dialog blocks
+/// until the user dismisses it, which would freeze the GUI.
+///
+/// On non-Windows platforms the spawned thread immediately sends `None`.
+pub fn browse_dk_file_async() -> std::sync::mpsc::Receiver<Option<String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = browse_dk_file_impl();
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+/// Blocking implementation — runs on the background thread.
+fn browse_dk_file_impl() -> Option<String> {
     #[cfg(windows)]
     {
         browse_dk_file_windows()
@@ -51,7 +65,12 @@ pub fn browse_dk_file() -> Option<String> {
 
 #[cfg(windows)]
 fn browse_dk_file_windows() -> Option<String> {
-    // PowerShell must run in STA mode to host the Windows Forms dialog.
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW (0x0800_0000) prevents Windows from opening a console
+    // window when spawning powershell.exe from a GUI process.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    // PowerShell must run in STA apartment mode to host Windows Forms dialogs.
     let script = r#"
 Add-Type -AssemblyName System.Windows.Forms
 $d = New-Object System.Windows.Forms.OpenFileDialog
@@ -63,6 +82,7 @@ if ($d.ShowDialog() -eq 'OK') { Write-Output $d.FileName }
 
     let output = std::process::Command::new("powershell")
         .args(["-NonInteractive", "-STA", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
 

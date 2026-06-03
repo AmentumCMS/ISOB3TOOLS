@@ -20,6 +20,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Instant;
 
+/// One-shot receiver returned from the background browse thread.
+pub(in crate::app) type BrowseReceiver = Receiver<Option<String>>;
+
 use eframe::egui;
 
 use crate::media::MediaRoot;
@@ -100,6 +103,11 @@ pub struct App {
     pub(in crate::app) keygen_prefix_input: String,
     /// Last result from key generation (`Ok(message)` or `Err(message)`).
     pub(in crate::app) keygen_status: Option<Result<String, String>>,
+
+    // ── Browse-dialog state ───────────────────────────────────────────────────
+    /// Pending result from the background native file-picker thread.
+    /// `Some(rx)` while the dialog is open; `None` otherwise.
+    pub(in crate::app) pending_dk_browse: Option<BrowseReceiver>,
 }
 
 // ── Constructor ────────────────────────────────────────────────────────────────
@@ -152,6 +160,7 @@ impl App {
             keygen_open: false,
             keygen_prefix_input,
             keygen_status: None,
+            pending_dk_browse: None,
         }
     }
 }
