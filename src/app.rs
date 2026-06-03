@@ -545,10 +545,12 @@ impl eframe::App for App {
                 } else {
                     ""
                 };
+                // Leave room for the indicator label (~90px) + separator + button (~130px)
+                let key_input_width = (ui.available_width() - 240.0).max(120.0);
                 ui.add(
                     egui::TextEdit::singleline(&mut self.private_key_input)
                         .hint_text(key_hint)
-                        .desired_width(340.0),
+                        .desired_width(key_input_width),
                 );
 
                 // Show whether the path resolves to an existing file
@@ -581,152 +583,176 @@ impl eframe::App for App {
         });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.heading("Drive Selection");
-            ui.separator();
-
-            if self.drives.is_empty() {
-                ui.label("Run `Scan Drives` to discover removable and optical drives.");
-            } else {
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(
-                            !self.discovering && !self.verifying,
-                            egui::Button::new("Select All"),
-                        )
-                        .clicked()
-                    {
-                        for drive in &mut self.drives {
-                            drive.selected = true;
-                        }
-                    }
-
-                    if ui
-                        .add_enabled(
-                            !self.discovering && !self.verifying,
-                            egui::Button::new("Clear"),
-                        )
-                        .clicked()
-                    {
-                        for drive in &mut self.drives {
-                            drive.selected = false;
-                        }
-                    }
+            // Log panel — anchored to the bottom, resizable upward.
+            // Declared first so egui allocates it before the inner panels.
+            egui::Panel::bottom("log_panel")
+                .resizable(true)
+                .min_size(60.0)
+                .default_size(180.0)
+                .show_inside(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.heading("Log");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.checkbox(&mut self.log_autoscroll, "Autoscroll");
+                        });
+                    });
+                    egui::ScrollArea::vertical()
+                        .id_salt("log_scroll")
+                        .stick_to_bottom(self.log_autoscroll)
+                        .show(ui, |ui| {
+                            for line in &self.logs {
+                                ui.label(line);
+                            }
+                        });
+                    self.scroll_log_to_bottom = false;
                 });
 
-                egui::Grid::new("drive_grid")
-                    .striped(true)
-                    .min_col_width(120.0)
-                    .show(ui, |ui| {
-                        let drive_counts: HashMap<String, (usize, usize)> = self
-                            .drives
-                            .iter()
-                            .map(|drive| {
-                                (
-                                    drive.media.display_name.clone(),
-                                    self.drive_result_counts(&drive.media.display_name),
-                                )
-                            })
-                            .chain(iter::empty())
-                            .collect();
-
-                        ui.strong("Use");
-                        ui.strong("Drive");
-                        ui.strong("Search Root");
-                        ui.strong("Embedded ISOB3");
-                        ui.strong("Checks");
-                        ui.end_row();
-
-                        for drive in &mut self.drives {
-                            ui.add_enabled(
-                                !self.discovering && !self.verifying,
-                                egui::Checkbox::without_text(&mut drive.selected),
-                            );
-                            let (passed, failed) = drive_counts
-                                .get(&drive.media.display_name)
-                                .copied()
-                                .unwrap_or((0, 0));
-                            if ui.link(&drive.media.display_name).clicked() {
-                                self.drive_details_target = Some(drive.media.display_name.clone());
-                                self.drive_details_open = true;
-                            }
-                            ui.label(drive.media.search_root.display().to_string());
-                            ui.label(
-                                drive
-                                    .media
-                                    .embedded_target
-                                    .as_ref()
-                                    .map(|path| path.display().to_string())
-                                    .unwrap_or_else(|| "n/a".to_string()),
-                            );
-                            ui.label(format!("{} pass / {} fail", passed, failed));
-                            ui.end_row();
-                        }
-                    });
-            }
-
-            ui.add_space(10.0);
-            ui.heading("Verification Results");
-            ui.separator();
-
-            egui::ScrollArea::vertical()
-                .id_salt("results_scroll")
-                .max_height(300.0)
-                .show(ui, |ui| {
-                    egui::Grid::new("results_grid")
-                        .striped(true)
-                        .min_col_width(80.0)
+            // Results panel — sits above the log, resizable.
+            egui::Panel::bottom("results_panel")
+                .resizable(true)
+                .min_size(60.0)
+                .default_size(220.0)
+                .show_inside(ui, |ui| {
+                    ui.heading("Verification Results");
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .id_salt("results_scroll")
                         .show(ui, |ui| {
-                            ui.strong("Drive");
-                            ui.strong("Check");
-                            ui.strong("Subject");
-                            ui.strong("Source");
-                            ui.strong("Status");
-                            ui.strong("Check Time");
-                            ui.strong("Summary");
-                            ui.end_row();
+                            egui::Grid::new("results_grid")
+                                .striped(true)
+                                .min_col_width(80.0)
+                                .show(ui, |ui| {
+                                    ui.strong("Drive");
+                                    ui.strong("Check");
+                                    ui.strong("Subject");
+                                    ui.strong("Source");
+                                    ui.strong("Status");
+                                    ui.strong("Check Time");
+                                    ui.strong("Summary");
+                                    ui.end_row();
 
-                            for row in &self.results {
-                                let Some(main_check_name) =
-                                    Self::main_result_check_name(&row.check_name)
-                                else {
-                                    continue;
-                                };
+                                    for row in &self.results {
+                                        let Some(main_check_name) =
+                                            Self::main_result_check_name(&row.check_name)
+                                        else {
+                                            continue;
+                                        };
 
-                                ui.label(&row.drive_name);
-                                ui.label(main_check_name);
-                                ui.label(&row.subject);
-                                ui.label(&row.source);
+                                        ui.label(&row.drive_name);
+                                        ui.label(main_check_name);
+                                        ui.label(&row.subject);
+                                        ui.label(&row.source);
 
-                                let color = if row.ok {
-                                    egui::Color32::GREEN
-                                } else {
-                                    egui::Color32::RED
-                                };
-                                ui.colored_label(color, if row.ok { "PASS" } else { "FAIL" });
+                                        let color = if row.ok {
+                                            egui::Color32::GREEN
+                                        } else {
+                                            egui::Color32::RED
+                                        };
+                                        ui.colored_label(
+                                            color,
+                                            if row.ok { "PASS" } else { "FAIL" },
+                                        );
 
-                                ui.label(format!("{:.2}s", row.elapsed_secs));
-                                ui.label(Self::main_result_detail(&row.detail));
-                                ui.end_row();
-                            }
+                                        ui.label(format!("{:.2}s", row.elapsed_secs));
+                                        ui.label(Self::main_result_detail(&row.detail));
+                                        ui.end_row();
+                                    }
+                                });
                         });
                 });
 
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.heading("Log");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.checkbox(&mut self.log_autoscroll, "Autoscroll");
-                });
+            // Drive selection fills whatever space remains.
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                ui.heading("Drive Selection");
+                ui.separator();
+
+                if self.drives.is_empty() {
+                    ui.label("Run `Scan Drives` to discover removable and optical drives.");
+                } else {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !self.discovering && !self.verifying,
+                                egui::Button::new("Select All"),
+                            )
+                            .clicked()
+                        {
+                            for drive in &mut self.drives {
+                                drive.selected = true;
+                            }
+                        }
+
+                        if ui
+                            .add_enabled(
+                                !self.discovering && !self.verifying,
+                                egui::Button::new("Clear"),
+                            )
+                            .clicked()
+                        {
+                            for drive in &mut self.drives {
+                                drive.selected = false;
+                            }
+                        }
+                    });
+
+                    egui::ScrollArea::vertical()
+                        .id_salt("drives_scroll")
+                        .show(ui, |ui| {
+                            egui::Grid::new("drive_grid")
+                                .striped(true)
+                                .min_col_width(120.0)
+                                .show(ui, |ui| {
+                                    let drive_counts: HashMap<String, (usize, usize)> = self
+                                        .drives
+                                        .iter()
+                                        .map(|drive| {
+                                            (
+                                                drive.media.display_name.clone(),
+                                                self.drive_result_counts(
+                                                    &drive.media.display_name,
+                                                ),
+                                            )
+                                        })
+                                        .chain(iter::empty())
+                                        .collect();
+
+                                    ui.strong("Use");
+                                    ui.strong("Drive");
+                                    ui.strong("Search Root");
+                                    ui.strong("Embedded ISOB3");
+                                    ui.strong("Checks");
+                                    ui.end_row();
+
+                                    for drive in &mut self.drives {
+                                        ui.add_enabled(
+                                            !self.discovering && !self.verifying,
+                                            egui::Checkbox::without_text(&mut drive.selected),
+                                        );
+                                        let (passed, failed) = drive_counts
+                                            .get(&drive.media.display_name)
+                                            .copied()
+                                            .unwrap_or((0, 0));
+                                        if ui.link(&drive.media.display_name).clicked() {
+                                            self.drive_details_target =
+                                                Some(drive.media.display_name.clone());
+                                            self.drive_details_open = true;
+                                        }
+                                        ui.label(drive.media.search_root.display().to_string());
+                                        ui.label(
+                                            drive
+                                                .media
+                                                .embedded_target
+                                                .as_ref()
+                                                .map(|path| path.display().to_string())
+                                                .unwrap_or_else(|| "n/a".to_string()),
+                                        );
+                                        ui.label(format!("{} pass / {} fail", passed, failed));
+                                        ui.end_row();
+                                    }
+                                });
+                        });
+                }
             });
-            egui::ScrollArea::vertical()
-                .id_salt("log_scroll")
-                .stick_to_bottom(self.log_autoscroll)
-                .show(ui, |ui| {
-                    for line in &self.logs {
-                        ui.label(line);
-                    }
-                });
-            self.scroll_log_to_bottom = false;
         });
 
         if self.show_about {
@@ -796,10 +822,11 @@ impl eframe::App for App {
 
         if self.drive_details_open {
             let mut is_open = self.drive_details_open;
+            let screen = ctx.content_rect();
             egui::Window::new("Drive Verification Details")
                 .open(&mut is_open)
                 .resizable(true)
-                .default_size([980.0, 420.0])
+                .default_size([screen.width() * 0.8, screen.height() * 0.6])
                 .show(&ctx, |ui| {
                     let Some(drive_name) = self.drive_details_target.as_deref() else {
                         ui.label("No drive selected.");
@@ -862,11 +889,12 @@ impl eframe::App for App {
 
         if self.password_prompt_open {
             let mut is_open = self.password_prompt_open;
+            let pw_width = (ctx.content_rect().width() * 0.38).clamp(320.0, 520.0);
             egui::Window::new("Encrypted File Password")
                 .open(&mut is_open)
                 .collapsible(false)
                 .resizable(false)
-                .default_width(420.0)
+                .default_width(pw_width)
                 .show(&ctx, |ui| {
                     ui.label(
                         "Enter the password used to decrypt DBENC001–DBENC004 encrypted files.",
@@ -875,7 +903,7 @@ impl eframe::App for App {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.password_input)
                             .password(true)
-                            .desired_width(360.0),
+                            .desired_width(f32::INFINITY),
                     );
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
@@ -930,10 +958,11 @@ impl eframe::App for App {
         if self.keygen_open {
             let mut generate_clicked = false;
             let mut close_clicked = false;
+            let keygen_width = (ctx.content_rect().width() * 0.42).clamp(360.0, 560.0);
             egui::Window::new("Generate ML-KEM-768 Keypair")
                 .collapsible(false)
                 .resizable(false)
-                .default_width(480.0)
+                .default_width(keygen_width)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(&ctx, |ui| {
                     ui.label("Generates a post-quantum (ML-KEM-768) keypair:");
