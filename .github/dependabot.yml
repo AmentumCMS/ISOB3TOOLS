@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # GitHub Actions used by the workflows in .github/workflows/.
+  # Dependabot understands SHA-pinned actions: it bumps both the commit SHA
+  # and the trailing "# vX" version comment, so the repo's pinning policy is
+  # preserved.  Updates are grouped into a single PR to keep review noise low;
+  # the lint, CodeQL, and build/test workflows then validate that PR.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Rust crate dependencies (Cargo.toml + Cargo.lock).
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Bundle non-breaking updates into one PR to cut review overhead.
+      # Major bumps are left ungrouped so they get individual, reviewable PRs.
+      cargo-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
