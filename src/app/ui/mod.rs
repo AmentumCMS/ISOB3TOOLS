@@ -69,7 +69,7 @@ pub fn render(app: &mut App, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::Panel::top("drives_panel")
             .resizable(true)
             .min_size(60.0)
-            .max_size(200.0)
+            .default_size(200.0)
             .show_inside(ui, |ui| {
                 panels::show_drives(app, ui);
             });
