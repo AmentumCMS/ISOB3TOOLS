@@ -601,6 +601,9 @@ jobs:
     needs: [build-linux-ubi, test-linux-ubi, test-linux-direnc, build-windows]
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
       - name: Download Linux binaries
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -624,6 +627,11 @@ jobs:
 
           cp downloaded/linux/* iso-root/
           cp downloaded/windows/* iso-root/
+
+          # Include documentation in the ISO so users have it on the disc.
+          if [ -d docs ]; then
+            cp -r docs iso-root/docs
+          fi
 
       - name: Create Linux archive
         run: |
