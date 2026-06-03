@@ -17,8 +17,14 @@ permissions:
 
 jobs:
   lint:
-    name: rustfmt + clippy
-    runs-on: ubuntu-latest
+    name: rustfmt + clippy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lint on both runners so `#[cfg(windows)]` and Linux-only code paths
+        # are both compiled and checked by clippy.
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -31,9 +37,11 @@ jobs:
       - name: Cache Cargo registry and build output
         uses: Swatinem/rust-cache@v2 # v2
         with:
-          key: lint
+          key: lint-${{ matrix.os }}
 
+      # rustfmt is platform-agnostic, so check formatting on one runner only.
       - name: Check formatting (rustfmt)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --all -- --check
 
       - name: Run clippy (deny warnings)
