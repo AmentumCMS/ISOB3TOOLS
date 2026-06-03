@@ -67,17 +67,19 @@ fn main() {
     }
 
     let cli = Cli::parse();
-    let output = cli.output.unwrap_or_else(|| match prompt("Output directory") {
-        Ok(value) if !value.is_empty() => PathBuf::from(value),
-        Ok(_) => {
-            eprintln!("output directory is required");
-            std::process::exit(2);
-        }
-        Err(err) => {
-            eprintln!("failed to read output directory: {err}");
-            std::process::exit(2);
-        }
-    });
+    let output = cli
+        .output
+        .unwrap_or_else(|| match prompt("Output directory") {
+            Ok(value) if !value.is_empty() => PathBuf::from(value),
+            Ok(_) => {
+                eprintln!("output directory is required");
+                std::process::exit(2);
+            }
+            Err(err) => {
+                eprintln!("failed to read output directory: {err}");
+                std::process::exit(2);
+            }
+        });
 
     let private_key: Option<[u8; PQE_DK_LEN]> = match cli.private_key.as_deref() {
         Some(path) => match load_private_key(path) {
@@ -124,7 +126,12 @@ fn main() {
         cli.password
     };
 
-    match run(&cli.input, &output, password.as_deref(), private_key.as_ref()) {
+    match run(
+        &cli.input,
+        &output,
+        password.as_deref(),
+        private_key.as_ref(),
+    ) {
         Ok(summary) => println!("{summary}"),
         Err(err) => {
             eprintln!("{err}");
@@ -145,10 +152,12 @@ fn default_key_dir() -> Option<PathBuf> {
 /// Read a `.dk` decapsulation-key file and return its 64-byte seed.
 fn load_private_key(path: &Path) -> Result<[u8; PQE_DK_LEN], String> {
     let bytes = fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
-    bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| format!("{} is not a valid ML-KEM-768 decapsulation key (expected {PQE_DK_LEN} bytes)", path.display()))
+    bytes.as_slice().try_into().map_err(|_| {
+        format!(
+            "{} is not a valid ML-KEM-768 decapsulation key (expected {PQE_DK_LEN} bytes)",
+            path.display()
+        )
+    })
 }
 
 fn run_gui() -> eframe::Result<()> {
@@ -200,15 +209,18 @@ impl eframe::App for DiscDecryptApp {
         let ctx = ui.ctx().clone();
 
         if let Some(rx) = &self.rx
-            && let Ok(result) = rx.try_recv() {
-                self.running = false;
-                self.rx = None;
-                self.status = result.unwrap_or_else(|err| format!("ERROR: {err}"));
-            }
+            && let Ok(result) = rx.try_recv()
+        {
+            self.running = false;
+            self.rx = None;
+            self.status = result.unwrap_or_else(|err| format!("ERROR: {err}"));
+        }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.heading("Disc Decryptor");
-            ui.label("Decrypt DBENC files from an extracted or mounted disc into an output folder.");
+            ui.label(
+                "Decrypt DBENC files from an extracted or mounted disc into an output folder.",
+            );
             ui.add_space(12.0);
 
             ui.label("Input folder or mounted disc root:");
@@ -519,10 +531,7 @@ fn run(
                     .map_err(|e| format!("decrypt failed for {}: {e}", path.display()))?;
             } else {
                 let pw = password.ok_or_else(|| {
-                    format!(
-                        "{} is password-encrypted — pass --password",
-                        path.display()
-                    )
+                    format!("{} is password-encrypted — pass --password", path.display())
                 })?;
                 decrypt_file_to_path(path, &destination, pw)
                     .map_err(|e| format!("decrypt failed for {}: {e}", path.display()))?;

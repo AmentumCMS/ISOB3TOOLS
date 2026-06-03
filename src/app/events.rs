@@ -52,7 +52,11 @@ impl App {
                 }
 
                 // ── Jobs queued ───────────────────────────────────────────────
-                WorkerEvent::JobsReady { count, workers, total_bytes } => {
+                WorkerEvent::JobsReady {
+                    count,
+                    workers,
+                    total_bytes,
+                } => {
                     self.total = count;
                     self.effective_workers = workers;
                     self.planned_bytes = total_bytes;

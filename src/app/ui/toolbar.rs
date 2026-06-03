@@ -60,7 +60,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             let masked = if app.password_input.is_empty() {
                 "No password set".to_string()
             } else {
-                format!("Password set ({} chars)", app.password_input.chars().count())
+                format!(
+                    "Password set ({} chars)",
+                    app.password_input.chars().count()
+                )
             };
             if ui.button(masked).clicked() {
                 app.password_prompt_open = true;
@@ -154,7 +157,10 @@ fn show_key_row(app: &mut App, ui: &mut egui::Ui) {
         {
             let browsing = app.pending_dk_browse.is_some();
             let label = if browsing { "Browsing…" } else { "Browse…" };
-            if ui.add_enabled(!browsing, egui::Button::new(label)).clicked() {
+            if ui
+                .add_enabled(!browsing, egui::Button::new(label))
+                .clicked()
+            {
                 app.pending_dk_browse = Some(keys::browse_dk_file_async());
             }
         }

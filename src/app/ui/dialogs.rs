@@ -3,8 +3,8 @@
 
 use eframe::egui;
 
-use crate::app::{App, keys};
 use super::panels;
+use crate::app::{App, keys};
 
 /// Render every dialog that might be open this frame.
 ///
@@ -73,10 +73,7 @@ fn show_about(app: &mut App, ctx: &egui::Context) {
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label("Created by William Kronfeld");
-                ui.hyperlink_to(
-                    "LinkedIn",
-                    "https://www.linkedin.com/in/william-kronfeld/",
-                );
+                ui.hyperlink_to("LinkedIn", "https://www.linkedin.com/in/william-kronfeld/");
             });
 
             ui.add_space(12.0);
@@ -102,9 +99,7 @@ fn show_password(app: &mut App, ctx: &egui::Context) {
         .resizable(false)
         .default_width(pw_width)
         .show(ctx, |ui| {
-            ui.label(
-                "Enter the password used to decrypt DBENC001–DBENC004 encrypted files.",
-            );
+            ui.label("Enter the password used to decrypt DBENC001–DBENC004 encrypted files.");
             ui.add_space(8.0);
             ui.add(
                 egui::TextEdit::singleline(&mut app.password_input)
@@ -187,15 +182,18 @@ fn show_keygen(app: &mut App, ctx: &egui::Context) {
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
             ui.label("Generates a post-quantum (ML-KEM-768) keypair:");
-            ui.label("  • .ek — encapsulation key (public, 1184 bytes) — share with disc producers");
-            ui.label("  • .dk — decapsulation key (private, 64 bytes)  — keep secret, needed to verify");
+            ui.label(
+                "  • .ek — encapsulation key (public, 1184 bytes) — share with disc producers",
+            );
+            ui.label(
+                "  • .dk — decapsulation key (private, 64 bytes)  — keep secret, needed to verify",
+            );
             ui.add_space(8.0);
 
             ui.horizontal(|ui| {
                 ui.label("Output prefix:");
                 ui.add(
-                    egui::TextEdit::singleline(&mut app.keygen_prefix_input)
-                        .desired_width(300.0),
+                    egui::TextEdit::singleline(&mut app.keygen_prefix_input).desired_width(300.0),
                 );
             });
 
@@ -243,9 +241,10 @@ fn show_keygen(app: &mut App, ctx: &egui::Context) {
 
         // Autoload the new .dk into the key field if nothing is set yet.
         if let Some(Ok(_)) = &app.keygen_status
-            && app.private_key_input.is_empty() {
-                app.private_key_input = format!("{}.dk", app.keygen_prefix_input);
-            }
+            && app.private_key_input.is_empty()
+        {
+            app.private_key_input = format!("{}.dk", app.keygen_prefix_input);
+        }
     }
 
     if close_clicked {

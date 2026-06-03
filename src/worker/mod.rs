@@ -53,8 +53,7 @@ pub struct VerificationResult {
 }
 
 /// Credentials and flags needed to handle encrypted disc files during verification.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct EncryptionSettings {
     /// Whether encrypted-file support is active at all.
     pub enabled: bool,
@@ -64,7 +63,6 @@ pub struct EncryptionSettings {
     /// When set, PQE-encrypted files are decrypted automatically without a password.
     pub private_key_path: Option<PathBuf>,
 }
-
 
 /// Events sent from background worker threads to the GUI event loop.
 #[derive(Debug)]
@@ -78,9 +76,7 @@ pub enum WorkerEvent {
         total_bytes: u64,
     },
     /// A chunk of bytes was hashed; used to advance the progress bar.
-    Progress {
-        bytes_delta: u64,
-    },
+    Progress { bytes_delta: u64 },
     /// One file-level check completed.
     VerificationResult(VerificationResult),
     /// The run was canceled via the abort flag.
@@ -204,13 +200,9 @@ pub fn verify_drives_worker(
                     .map_err(|e| e.to_string())?;
 
                     for entry in parsed.entries {
-                        totals.target_bytes =
-                            totals
-                                .target_bytes
-                                .saturating_add(plan::estimated_manifest_target_bytes(
-                                    &entry.target_path,
-                                    &encryption,
-                                ));
+                        totals.target_bytes = totals.target_bytes.saturating_add(
+                            plan::estimated_manifest_target_bytes(&entry.target_path, &encryption),
+                        );
 
                         sha_jobs.push(WorkerJob::VerifyManifestEntry {
                             media: drive.clone(),

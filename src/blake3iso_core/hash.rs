@@ -17,8 +17,8 @@ use std::path::Path;
 
 use blake3::Hasher;
 
+use super::io::read_with_retries;
 use super::{APPDATA_FILL, APPDATA_OFFSET, APPDATA_SIZE};
-use super::io::{read_with_retries};
 
 // ── Streaming (on-disk) ────────────────────────────────────────────────────────
 
@@ -176,6 +176,9 @@ mod tests {
 
         let normalised = compute_blake3_normalized_bytes(&data);
         let raw = *blake3::hash(&data).as_bytes();
-        assert_ne!(normalised, raw, "hash should differ when appdata is non-blank");
+        assert_ne!(
+            normalised, raw,
+            "hash should differ when appdata is non-blank"
+        );
     }
 }

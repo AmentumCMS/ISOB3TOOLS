@@ -164,12 +164,8 @@ where
         None => return Ok(CheckOutcome::Missing),
     };
 
-    let actual = hash::compute_blake3_normalized_with_cancel(
-        path,
-        1024 * 1024,
-        progress,
-        should_abort,
-    )?;
+    let actual =
+        hash::compute_blake3_normalized_with_cancel(path, 1024 * 1024, progress, should_abort)?;
 
     let stored_hex = hash::hex(&stored);
     let actual_hex = hash::hex(&actual);
@@ -202,9 +198,8 @@ pub fn check_iso_bytes(bytes: &[u8]) -> Result<CheckOutcome, String> {
         return Err("file too small to contain ISOB3 metadata".to_string());
     }
     let mut appdata = [0u8; APPDATA_SIZE];
-    appdata.copy_from_slice(
-        &bytes[APPDATA_OFFSET as usize..APPDATA_OFFSET as usize + APPDATA_SIZE],
-    );
+    appdata
+        .copy_from_slice(&bytes[APPDATA_OFFSET as usize..APPDATA_OFFSET as usize + APPDATA_SIZE]);
 
     let stored = match read_metadata_from_appdata(&appdata)? {
         Some(d) => d,
@@ -317,11 +312,20 @@ pub fn info_iso(path: &Path) -> Result<String, String> {
     let mut digest = [0u8; 32];
     digest.copy_from_slice(&appdata[16..48]);
 
-    let algo_name = if algo == ALGO_BLAKE3_256 { "BLAKE3-256" } else { "Unknown" };
+    let algo_name = if algo == ALGO_BLAKE3_256 {
+        "BLAKE3-256"
+    } else {
+        "Unknown"
+    };
 
     Ok(format!(
         "ISOB3 metadata found\nVersion: {}\nAlgorithm: {}\nDigest len: {}\nFlags: {}\nDigest: {}\nOffset: 0x{:X}",
-        version, algo_name, digest_len, flags, hash::hex(&digest), APPDATA_OFFSET
+        version,
+        algo_name,
+        digest_len,
+        flags,
+        hash::hex(&digest),
+        APPDATA_OFFSET
     ))
 }
 
@@ -388,7 +392,8 @@ mod tests {
         buf[0..8].copy_from_slice(b"ISOB3APP");
         buf[8] = 0xFF; // unrecognised version
         buf[9] = 1;
-        buf[10] = 32; buf[11] = 0;
+        buf[10] = 32;
+        buf[11] = 0;
         assert!(matches!(read_metadata_from_appdata(&buf), Ok(None)));
     }
 
@@ -398,7 +403,8 @@ mod tests {
         buf[0..8].copy_from_slice(b"ISOB3APP");
         buf[8] = 1;
         buf[9] = 0xFF; // unknown algorithm
-        buf[10] = 32; buf[11] = 0;
+        buf[10] = 32;
+        buf[11] = 0;
         assert!(matches!(read_metadata_from_appdata(&buf), Ok(None)));
     }
 
@@ -408,7 +414,8 @@ mod tests {
         buf[0..8].copy_from_slice(b"ISOB3APP");
         buf[8] = 1;
         buf[9] = 1;
-        buf[10] = 16; buf[11] = 0; // 16 instead of required 32
+        buf[10] = 16;
+        buf[11] = 0; // 16 instead of required 32
         assert!(matches!(read_metadata_from_appdata(&buf), Ok(None)));
     }
 
@@ -416,9 +423,10 @@ mod tests {
     fn appdata_valid_record_returns_digest() {
         let mut buf = [APPDATA_FILL; APPDATA_SIZE];
         buf[0..8].copy_from_slice(b"ISOB3APP");
-        buf[8] = 1;   // VERSION
-        buf[9] = 1;   // ALGO_BLAKE3_256
-        buf[10] = 32; buf[11] = 0; // DIGEST_LEN LE
+        buf[8] = 1; // VERSION
+        buf[9] = 1; // ALGO_BLAKE3_256
+        buf[10] = 32;
+        buf[11] = 0; // DIGEST_LEN LE
         buf[12..16].copy_from_slice(&0u32.to_le_bytes()); // FLAGS
         let digest = [0xABu8; 32];
         buf[16..48].copy_from_slice(&digest);

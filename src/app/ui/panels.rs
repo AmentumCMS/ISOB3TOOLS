@@ -107,8 +107,7 @@ pub fn show_drives(app: &mut App, ui: &mut egui::Ui) {
                             .unwrap_or((0, 0));
 
                         if ui.link(&drive.media.display_name).clicked() {
-                            app.drive_details_target =
-                                Some(drive.media.display_name.clone());
+                            app.drive_details_target = Some(drive.media.display_name.clone());
                             app.drive_details_open = true;
                         }
 
@@ -159,8 +158,7 @@ pub fn show_results(app: &mut App, ui: &mut egui::Ui) {
 
                     for row in &app.results {
                         // Skip sub-checks that don't map to a top-level check name.
-                        let Some(main_check_name) =
-                            App::main_result_check_name(&row.check_name)
+                        let Some(main_check_name) = App::main_result_check_name(&row.check_name)
                         else {
                             continue;
                         };

@@ -18,16 +18,16 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use aes::{Aes256, Block};
 use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit as CipherKeyInit};
+use aes::{Aes256, Block};
 use hmac::{KeyInit as HmacKeyInit, Mac};
 use sha2::{Digest, Sha256};
 
 use super::{
-    AES_BLOCK_SIZE, AEAD_CHUNK_SIZE, DecryptedFile, DecryptedTempFile, HmacSha256,
+    AEAD_CHUNK_SIZE, AES_BLOCK_SIZE, DecryptedFile, DecryptedTempFile, HmacSha256,
     LEGACY_HEADER_LEN, LEGACY_IV_LEN, LEGACY_MAC_LEN, LEGACY_PBKDF2_ROUNDS, LEGACY_SALT_LEN,
-    LegacyHeader, MAGIC_DBENC001, cleanup_temp_file, ensure_parent_dir, hex_digest,
-    make_temp_path, pbkdf2_hmac_sha256,
+    LegacyHeader, MAGIC_DBENC001, cleanup_temp_file, ensure_parent_dir, hex_digest, make_temp_path,
+    pbkdf2_hmac_sha256,
 };
 
 // ── Encryption ─────────────────────────────────────────────────────────────────
@@ -66,9 +66,13 @@ pub(super) fn encrypt_legacy_file_to_path(
         .open(destination_path)
         .map_err(|e| format!("open destination failed: {e}"))?;
 
-    destination.write_all(&parsed.header).map_err(|e| format!("write failed: {e}"))?;
+    destination
+        .write_all(&parsed.header)
+        .map_err(|e| format!("write failed: {e}"))?;
     // Write a zero placeholder — will be patched below with the real HMAC.
-    destination.write_all(&[0u8; LEGACY_MAC_LEN]).map_err(|e| format!("write failed: {e}"))?;
+    destination
+        .write_all(&[0u8; LEGACY_MAC_LEN])
+        .map_err(|e| format!("write failed: {e}"))?;
 
     let ciphertext_bytes = encrypt_legacy_stream_to_writer(&mut source, &mut destination, &parsed)?;
 
@@ -76,7 +80,9 @@ pub(super) fn encrypt_legacy_file_to_path(
     let mut hmac = <HmacSha256 as HmacKeyInit>::new_from_slice(&parsed.mac_key)
         .map_err(|e| format!("hmac init failed: {e}"))?;
     hmac.update(&parsed.header);
-    destination.flush().map_err(|e| format!("flush failed: {e}"))?;
+    destination
+        .flush()
+        .map_err(|e| format!("flush failed: {e}"))?;
     let mut encrypted =
         File::open(destination_path).map_err(|e| format!("re-open destination failed: {e}"))?;
     encrypted
@@ -84,7 +90,9 @@ pub(super) fn encrypt_legacy_file_to_path(
         .map_err(|e| format!("seek failed: {e}"))?;
     let mut buf = vec![0u8; AEAD_CHUNK_SIZE];
     loop {
-        let read = encrypted.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+        let read = encrypted
+            .read(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
         if read == 0 {
             break;
         }
@@ -94,8 +102,12 @@ pub(super) fn encrypt_legacy_file_to_path(
     destination
         .seek(SeekFrom::Start(LEGACY_HEADER_LEN as u64))
         .map_err(|e| format!("seek failed: {e}"))?;
-    destination.write_all(&mac).map_err(|e| format!("write failed: {e}"))?;
-    destination.flush().map_err(|e| format!("flush failed: {e}"))?;
+    destination
+        .write_all(&mac)
+        .map_err(|e| format!("write failed: {e}"))?;
+    destination
+        .flush()
+        .map_err(|e| format!("flush failed: {e}"))?;
     Ok(ciphertext_bytes)
 }
 
@@ -105,9 +117,11 @@ pub(super) fn encrypt_legacy_file_to_path(
 fn parse_legacy_header_from_file(path: &Path, password: &str) -> Result<LegacyHeader, String> {
     let mut file = File::open(path).map_err(|e| format!("open failed: {e}"))?;
     let mut header = [0u8; LEGACY_HEADER_LEN];
-    file.read_exact(&mut header).map_err(|e| format!("read failed: {e}"))?;
+    file.read_exact(&mut header)
+        .map_err(|e| format!("read failed: {e}"))?;
     let mut mac = [0u8; LEGACY_MAC_LEN];
-    file.read_exact(&mut mac).map_err(|e| format!("read failed: {e}"))?;
+    file.read_exact(&mut mac)
+        .map_err(|e| format!("read failed: {e}"))?;
     parse_legacy_header(&header, &mac, password)
 }
 
@@ -127,8 +141,9 @@ pub(super) fn parse_legacy_header(
         return Err("missing DBENC001 header".to_string());
     }
     let salt = &header[8..24];
-    let iv: [u8; LEGACY_IV_LEN] =
-        header[24..40].try_into().map_err(|_| "invalid IV field".to_string())?;
+    let iv: [u8; LEGACY_IV_LEN] = header[24..40]
+        .try_into()
+        .map_err(|_| "invalid IV field".to_string())?;
     let iterations = u32::from_le_bytes(
         header[40..44]
             .try_into()
@@ -145,7 +160,13 @@ pub(super) fn parse_legacy_header(
     enc_key.copy_from_slice(&key_material[..32]);
     let mut mac_key = [0u8; 32];
     mac_key.copy_from_slice(&key_material[32..64]);
-    Ok(LegacyHeader { header, mac, enc_key, mac_key, iv })
+    Ok(LegacyHeader {
+        header,
+        mac,
+        enc_key,
+        mac_key,
+        iv,
+    })
 }
 
 /// Decrypt an in-memory DBENC001 ciphertext blob, verifying the HMAC first.
@@ -213,7 +234,9 @@ where
         if should_abort() {
             return Err("operation aborted".to_string());
         }
-        let read = file.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+        let read = file
+            .read(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
         if read == 0 {
             break;
         }
@@ -285,7 +308,9 @@ where
         if should_abort() {
             return Err("operation aborted".to_string());
         }
-        let read = reader.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+        let read = reader
+            .read(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
         if read == 0 {
             break;
         }
@@ -298,7 +323,9 @@ where
             }
             let block = pending[..AES_BLOCK_SIZE].to_vec();
             let plaintext_block = decrypt_legacy_cbc_block(&cipher, &block, &prev_block);
-            writer.write_all(&plaintext_block).map_err(|e| format!("temp write failed: {e}"))?;
+            writer
+                .write_all(&plaintext_block)
+                .map_err(|e| format!("temp write failed: {e}"))?;
             sha.update(plaintext_block);
             plaintext_bytes += plaintext_block.len() as u64;
             progress(plaintext_block.len() as u64);
@@ -326,12 +353,16 @@ where
     }
     let unpadded = &final_plaintext[..final_plaintext.len() - pad_len];
     if !unpadded.is_empty() {
-        writer.write_all(unpadded).map_err(|e| format!("temp write failed: {e}"))?;
+        writer
+            .write_all(unpadded)
+            .map_err(|e| format!("temp write failed: {e}"))?;
         sha.update(unpadded);
         plaintext_bytes += unpadded.len() as u64;
         progress(unpadded.len() as u64);
     }
-    writer.flush().map_err(|e| format!("temp flush failed: {e}"))?;
+    writer
+        .flush()
+        .map_err(|e| format!("temp flush failed: {e}"))?;
     Ok(DecryptedTempFile {
         temp_path: temp_path.to_path_buf(),
         plaintext_sha256: hex_digest(&sha.finalize()),
@@ -358,7 +389,9 @@ pub(super) fn encrypt_legacy_stream_to_writer(
     let mut total_ciphertext = 0u64;
 
     loop {
-        let read = source.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+        let read = source
+            .read(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
         if read == 0 {
             break;
         }
@@ -366,7 +399,9 @@ pub(super) fn encrypt_legacy_stream_to_writer(
         while pending.len() >= AES_BLOCK_SIZE {
             let block = pending[..AES_BLOCK_SIZE].to_vec();
             let ciphertext_block = encrypt_legacy_cbc_block(&cipher, &block, &prev_block);
-            destination.write_all(&ciphertext_block).map_err(|e| format!("write failed: {e}"))?;
+            destination
+                .write_all(&ciphertext_block)
+                .map_err(|e| format!("write failed: {e}"))?;
             prev_block.copy_from_slice(&ciphertext_block);
             pending.drain(..AES_BLOCK_SIZE);
             total_ciphertext += AES_BLOCK_SIZE as u64;
@@ -378,7 +413,9 @@ pub(super) fn encrypt_legacy_stream_to_writer(
     pending.extend(std::iter::repeat_n(pad_len as u8, pad_len));
     for chunk in pending.chunks_exact(AES_BLOCK_SIZE) {
         let ciphertext_block = encrypt_legacy_cbc_block(&cipher, chunk, &prev_block);
-        destination.write_all(&ciphertext_block).map_err(|e| format!("write failed: {e}"))?;
+        destination
+            .write_all(&ciphertext_block)
+            .map_err(|e| format!("write failed: {e}"))?;
         prev_block.copy_from_slice(&ciphertext_block);
         total_ciphertext += AES_BLOCK_SIZE as u64;
     }
@@ -437,11 +474,16 @@ fn decrypt_legacy_cbc_bytes(
         plaintext.extend_from_slice(&decrypted);
         prev_block.copy_from_slice(chunk);
     }
-    let pad_len = *plaintext.last().ok_or_else(|| "empty plaintext".to_string())? as usize;
+    let pad_len = *plaintext
+        .last()
+        .ok_or_else(|| "empty plaintext".to_string())? as usize;
     if pad_len == 0 || pad_len > AES_BLOCK_SIZE {
         return Err("invalid PKCS7 padding".to_string());
     }
-    if !plaintext[plaintext.len() - pad_len..].iter().all(|&b| b as usize == pad_len) {
+    if !plaintext[plaintext.len() - pad_len..]
+        .iter()
+        .all(|&b| b as usize == pad_len)
+    {
         return Err("invalid PKCS7 padding".to_string());
     }
     plaintext.truncate(plaintext.len() - pad_len);
@@ -450,8 +492,11 @@ fn decrypt_legacy_cbc_bytes(
 
 /// Return the number of ciphertext bytes in a DBENC001 file (file size minus header).
 fn legacy_file_cipher_len(path: &Path) -> Result<u64, String> {
-    let total =
-        std::fs::metadata(path).map_err(|e| format!("metadata failed: {e}"))?.len();
+    let total = std::fs::metadata(path)
+        .map_err(|e| format!("metadata failed: {e}"))?
+        .len();
     let overhead = (LEGACY_HEADER_LEN + LEGACY_MAC_LEN) as u64;
-    total.checked_sub(overhead).ok_or_else(|| "encrypted file too small".to_string())
+    total
+        .checked_sub(overhead)
+        .ok_or_else(|| "encrypted file too small".to_string())
 }

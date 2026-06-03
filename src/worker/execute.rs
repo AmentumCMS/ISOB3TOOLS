@@ -17,13 +17,13 @@ use crate::blake3iso_core::{
     CheckOutcome, check_iso_bytes, check_iso_with_progress_and_cancel, estimate_iso_bytes,
 };
 use crate::dbenc::{
-    DbEncFormat, cleanup_temp_file, decrypt_file_to_temp_with_cancel,
-    decrypt_file_pqe_to_temp_with_cancel, detect_format,
+    DbEncFormat, cleanup_temp_file, decrypt_file_pqe_to_temp_with_cancel,
+    decrypt_file_to_temp_with_cancel, detect_format,
 };
 use crate::sha256sum::compute_sha256_with_progress_and_cancel;
 
-use super::{EncryptionSettings, VerificationResult, WorkerEvent, WorkerJob};
 use super::plan::{file_len, load_dk_bytes};
+use super::{EncryptionSettings, VerificationResult, WorkerEvent, WorkerJob};
 
 // ── Internal types ─────────────────────────────────────────────────────────────
 
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn iso_bytes_too_short_returns_false() {
         assert!(!looks_like_iso_bytes(&[]));
-        assert!(!looks_like_iso_bytes(&[0u8; 16 * 2048]));   // one byte short
+        assert!(!looks_like_iso_bytes(&[0u8; 16 * 2048])); // one byte short
         assert!(!looks_like_iso_bytes(&[0u8; 16 * 2048 + 6]));
     }
 

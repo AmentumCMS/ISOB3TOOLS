@@ -106,7 +106,10 @@ fn main() {
 /// Resolve which encryption credential to use, following the priority order:
 /// explicit `--public-key`, explicit `--password`, auto-discovered `.ek`,
 /// then interactive password prompt.
-fn resolve_enc_key(password: Option<String>, public_key: Option<PathBuf>) -> Result<EncKey, String> {
+fn resolve_enc_key(
+    password: Option<String>,
+    public_key: Option<PathBuf>,
+) -> Result<EncKey, String> {
     if let Some(pk_path) = public_key {
         return Ok(EncKey::PublicKey(load_public_key(&pk_path)?));
     }
@@ -114,14 +117,18 @@ fn resolve_enc_key(password: Option<String>, public_key: Option<PathBuf>) -> Res
         return Ok(EncKey::Password(pw));
     }
     if let Some(default_ek) = keyutil::default_key_dir().map(|d| d.join("default.ek"))
-        && default_ek.is_file() {
-            eprintln!("Using default encapsulation key: {}", default_ek.display());
-            return Ok(EncKey::PublicKey(load_public_key(&default_ek)?));
-        }
+        && default_ek.is_file()
+    {
+        eprintln!("Using default encapsulation key: {}", default_ek.display());
+        return Ok(EncKey::PublicKey(load_public_key(&default_ek)?));
+    }
     // Fall back to password prompt
     match prompt("Password") {
         Ok(pw) if !pw.is_empty() => Ok(EncKey::Password(pw)),
-        Ok(_) => Err("password is required (or provide --public-key, or place a key at ~/.isob3/default.ek)".to_string()),
+        Ok(_) => Err(
+            "password is required (or provide --public-key, or place a key at ~/.isob3/default.ek)"
+                .to_string(),
+        ),
         Err(e) => Err(format!("failed to read password: {e}")),
     }
 }
@@ -138,10 +145,12 @@ fn prompt(label: &str) -> io::Result<String> {
 /// Read an ML-KEM-768 encapsulation key from `path`, returning the raw 1184-byte array.
 fn load_public_key(path: &PathBuf) -> Result<[u8; PQE_EK_LEN], String> {
     let bytes = fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
-    bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| format!("{} is not a valid ML-KEM-768 encapsulation key (expected {PQE_EK_LEN} bytes)", path.display()))
+    bytes.as_slice().try_into().map_err(|_| {
+        format!(
+            "{} is not a valid ML-KEM-768 encapsulation key (expected {PQE_EK_LEN} bytes)",
+            path.display()
+        )
+    })
 }
 
 /// Encrypt every payload file in `dir` in-place and inject the decryptor bundle.
@@ -288,12 +297,8 @@ fn inject_decryptor(root: &Path) -> Result<(), String> {
         )
     })?;
 
-    fs::copy(&linux_dec, target_dir.join("discdecrypt")).map_err(|e| {
-        format!(
-            "copy decryptor failed from {}: {e}",
-            linux_dec.display()
-        )
-    })?;
+    fs::copy(&linux_dec, target_dir.join("discdecrypt"))
+        .map_err(|e| format!("copy decryptor failed from {}: {e}", linux_dec.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

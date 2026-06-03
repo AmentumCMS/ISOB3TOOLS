@@ -34,8 +34,8 @@ use sha2::{Digest, Sha256};
 
 use super::{
     AEAD_CHUNK_SIZE, AEAD_XCHACHA_NONCE_LEN, DbEncFormat, DecryptedTempFile, MAGIC_DBENC005,
-    cleanup_temp_file, ensure_parent_dir, fill_random, hex_digest, make_aead_aad,
-    make_aead_nonce, make_temp_path, write_aead_chunk,
+    cleanup_temp_file, ensure_parent_dir, fill_random, hex_digest, make_aead_aad, make_aead_nonce,
+    make_temp_path, write_aead_chunk,
 };
 
 /// Size of the ML-KEM-768 encapsulation key (public key) in bytes.
@@ -100,8 +100,7 @@ pub fn encrypt_file_pqe(
     let mut header = [0u8; PQE_HEADER_LEN];
     header[..8].copy_from_slice(MAGIC_DBENC005);
     header[8..8 + PQE_CT_LEN].copy_from_slice(&ct_arr);
-    header[8 + PQE_CT_LEN..8 + PQE_CT_LEN + AEAD_XCHACHA_NONCE_LEN]
-        .copy_from_slice(&nonce_prefix);
+    header[8 + PQE_CT_LEN..8 + PQE_CT_LEN + AEAD_XCHACHA_NONCE_LEN].copy_from_slice(&nonce_prefix);
     header[8 + PQE_CT_LEN + AEAD_XCHACHA_NONCE_LEN..PQE_HEADER_LEN]
         .copy_from_slice(&(AEAD_CHUNK_SIZE as u32).to_le_bytes());
 
@@ -113,14 +112,17 @@ pub fn encrypt_file_pqe(
         .truncate(true)
         .open(destination_path)
         .map_err(|e| format!("open destination failed: {e}"))?;
-    dest.write_all(&header).map_err(|e| format!("write header failed: {e}"))?;
+    dest.write_all(&header)
+        .map_err(|e| format!("write header failed: {e}"))?;
 
     let mut total = 0u64;
     let mut chunk_index = 0u64;
     let mut buf = vec![0u8; AEAD_CHUNK_SIZE];
 
     loop {
-        let read = source.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+        let read = source
+            .read(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
         if read == 0 {
             break;
         }
@@ -323,7 +325,9 @@ where
             progress(ct_buf.len() as u64);
             chunk_index += 1;
         }
-        writer.flush().map_err(|e| format!("temp flush failed: {e}"))
+        writer
+            .flush()
+            .map_err(|e| format!("temp flush failed: {e}"))
     })();
 
     if let Err(e) = result {

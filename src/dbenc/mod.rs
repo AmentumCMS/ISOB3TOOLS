@@ -170,7 +170,9 @@ pub fn parse_format_name(name: &str) -> Option<DbEncFormat> {
 pub fn detect_format(path: &Path) -> Result<Option<DbEncFormat>, String> {
     let mut magic = [0u8; 8];
     let mut file = File::open(path).map_err(|e| format!("open failed: {e}"))?;
-    let read = file.read(&mut magic).map_err(|e| format!("read failed: {e}"))?;
+    let read = file
+        .read(&mut magic)
+        .map_err(|e| format!("read failed: {e}"))?;
     if read < magic.len() {
         return Ok(None);
     }
@@ -423,16 +425,17 @@ pub(super) fn fill_random(buf: &mut [u8]) -> Result<(), String> {
 pub(super) fn fill_random(buf: &mut [u8]) -> Result<(), String> {
     use std::io::Read;
     let mut file = File::open("/dev/urandom").map_err(|e| format!("random open failed: {e}"))?;
-    file.read_exact(buf).map_err(|e| format!("random read failed: {e}"))
+    file.read_exact(buf)
+        .map_err(|e| format!("random read failed: {e}"))
 }
 
 /// Create all missing parent directories for `path`.
 pub(super) fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("create directory failed: {e}"))?;
-        }
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create directory failed: {e}"))?;
+    }
     Ok(())
 }
 
@@ -495,7 +498,10 @@ mod tests {
         let mut magic_buf = [0u8; 8];
         {
             use std::io::Read;
-            fs::File::open(&enc).unwrap().read_exact(&mut magic_buf).unwrap();
+            fs::File::open(&enc)
+                .unwrap()
+                .read_exact(&mut magic_buf)
+                .unwrap();
         }
         let expected_magic = match format {
             DbEncFormat::DbEnc001 => b"DBENC001",
@@ -504,32 +510,56 @@ mod tests {
             DbEncFormat::DbEnc004 => b"DBENC004",
             DbEncFormat::DbEnc005 => b"DBENC005",
         };
-        assert_eq!(&magic_buf, expected_magic, "magic mismatch for {:?}", format);
+        assert_eq!(
+            &magic_buf, expected_magic,
+            "magic mismatch for {:?}",
+            format
+        );
 
         let decrypted = decrypt_file(&enc, password).expect("decrypt");
-        assert_eq!(decrypted.plaintext, plaintext, "round-trip mismatch for {:?}", format);
+        assert_eq!(
+            decrypted.plaintext, plaintext,
+            "round-trip mismatch for {:?}",
+            format
+        );
 
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn round_trip_dbenc001_legacy_cbc() {
-        assert_roundtrip(b"hello dbenc001 legacy world!", "pass-001", DbEncFormat::DbEnc001);
+        assert_roundtrip(
+            b"hello dbenc001 legacy world!",
+            "pass-001",
+            DbEncFormat::DbEnc001,
+        );
     }
 
     #[test]
     fn round_trip_dbenc002_aes_gcm() {
-        assert_roundtrip(b"hello dbenc002 aes-gcm world!", "pass-002", DbEncFormat::DbEnc002);
+        assert_roundtrip(
+            b"hello dbenc002 aes-gcm world!",
+            "pass-002",
+            DbEncFormat::DbEnc002,
+        );
     }
 
     #[test]
     fn round_trip_dbenc003_xchacha20() {
-        assert_roundtrip(b"hello dbenc003 xchacha20 world!", "pass-003", DbEncFormat::DbEnc003);
+        assert_roundtrip(
+            b"hello dbenc003 xchacha20 world!",
+            "pass-003",
+            DbEncFormat::DbEnc003,
+        );
     }
 
     #[test]
     fn round_trip_dbenc004_argon2id() {
-        assert_roundtrip(b"hello dbenc004 argon2id world!", "pass-004", DbEncFormat::DbEnc004);
+        assert_roundtrip(
+            b"hello dbenc004 argon2id world!",
+            "pass-004",
+            DbEncFormat::DbEnc004,
+        );
     }
 
     #[test]

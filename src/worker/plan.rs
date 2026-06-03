@@ -10,8 +10,8 @@ use std::sync::mpsc::Sender;
 use walkdir::WalkDir;
 
 use crate::dbenc::{
-    DbEncFormat, PQE_DK_LEN, cleanup_temp_file, decrypt_file, detect_format,
-    decrypt_file_pqe_to_temp_with_cancel, is_encrypted_file,
+    DbEncFormat, PQE_DK_LEN, cleanup_temp_file, decrypt_file, decrypt_file_pqe_to_temp_with_cancel,
+    detect_format, is_encrypted_file,
 };
 use crate::sha256sum::{
     ParsedManifest, is_sha256_manifest, parse_sha256_manifest, parse_sha256_manifest_bytes,
@@ -173,10 +173,7 @@ pub(super) fn pqe_manifest_probe(
 /// Estimate the bytes that will be processed when loading a manifest file.
 ///
 /// Encrypted manifests are counted twice (once to decrypt, once to parse).
-pub(super) fn estimated_manifest_bytes(
-    path: &Path,
-    encryption: &super::EncryptionSettings,
-) -> u64 {
+pub(super) fn estimated_manifest_bytes(path: &Path, encryption: &super::EncryptionSettings) -> u64 {
     let file_bytes = file_len(path);
     if encryption.enabled && is_encrypted_file(path).unwrap_or(false) {
         file_bytes.saturating_mul(2)

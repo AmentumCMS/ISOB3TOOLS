@@ -53,10 +53,7 @@ impl App {
             0.0
         };
 
-        let total_elapsed_secs = self
-            .total_elapsed()
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(0.0);
+        let total_elapsed_secs = self.total_elapsed().map(|d| d.as_secs_f64()).unwrap_or(0.0);
 
         let live_throughput = if total_elapsed_secs > 0.0 {
             self.processed_bytes as f64 / total_elapsed_secs
@@ -102,7 +99,9 @@ impl App {
     /// Elapsed time since verification started, or `None` if never started.
     pub(in crate::app) fn total_elapsed(&self) -> Option<Duration> {
         let started = self.verification_started_at?;
-        let end = self.verification_finished_at.unwrap_or_else(std::time::Instant::now);
+        let end = self
+            .verification_finished_at
+            .unwrap_or_else(std::time::Instant::now);
         Some(end.saturating_duration_since(started))
     }
 

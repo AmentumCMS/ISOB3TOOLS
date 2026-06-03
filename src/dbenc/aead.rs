@@ -23,18 +23,17 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use aes_gcm::{Aes256Gcm, Nonce as GcmNonce};
 use aes_gcm::aead::KeyInit as AeadKeyInit;
+use aes_gcm::{Aes256Gcm, Nonce as GcmNonce};
 use chacha20poly1305::aead::AeadInPlace;
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use sha2::{Digest, Sha256};
 
 use super::{
-    AEAD_AES_GCM_NONCE_LEN, AEAD_CHUNK_SIZE, AEAD_HEADER_LEN, AEAD_PBKDF2_ROUNDS,
-    AEAD_SALT_LEN, AEAD_XCHACHA_NONCE_LEN, AeadHeader, DbEncFormat, DecryptedTempFile,
-    MAGIC_DBENC002, MAGIC_DBENC003, cleanup_temp_file, ensure_parent_dir, hex_digest,
-    make_aead_aad, make_aead_nonce, make_temp_path, pbkdf2_hmac_sha256, write_aead_chunk,
-    fill_random,
+    AEAD_AES_GCM_NONCE_LEN, AEAD_CHUNK_SIZE, AEAD_HEADER_LEN, AEAD_PBKDF2_ROUNDS, AEAD_SALT_LEN,
+    AEAD_XCHACHA_NONCE_LEN, AeadHeader, DbEncFormat, DecryptedTempFile, MAGIC_DBENC002,
+    MAGIC_DBENC003, cleanup_temp_file, ensure_parent_dir, fill_random, hex_digest, make_aead_aad,
+    make_aead_nonce, make_temp_path, pbkdf2_hmac_sha256, write_aead_chunk,
 };
 
 /// Build a new AEAD header for DBENC002 or DBENC003, generating fresh random
@@ -59,7 +58,11 @@ fn build_aead_header(password: &str, format: DbEncFormat) -> Result<AeadHeader, 
     header[24..48].copy_from_slice(&nonce_prefix);
     header[48..52].copy_from_slice(&AEAD_PBKDF2_ROUNDS.to_le_bytes());
     header[52..56].copy_from_slice(&(AEAD_CHUNK_SIZE as u32).to_le_bytes());
-    header[56] = if format == DbEncFormat::DbEnc002 { 2 } else { 3 };
+    header[56] = if format == DbEncFormat::DbEnc002 {
+        2
+    } else {
+        3
+    };
 
     let mut key = [0u8; 32];
     pbkdf2_hmac_sha256(password.as_bytes(), &salt, AEAD_PBKDF2_ROUNDS, &mut key);
@@ -102,7 +105,9 @@ pub(super) fn encrypt_aead_file_to_path(
     let mut buf = vec![0u8; parsed.chunk_size as usize];
 
     loop {
-        let read = source.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+        let read = source
+            .read(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
         if read == 0 {
             break;
         }
@@ -144,7 +149,9 @@ pub(super) fn encrypt_aead_file_to_path(
         chunk_index += 1;
     }
 
-    destination.flush().map_err(|e| format!("flush failed: {e}"))?;
+    destination
+        .flush()
+        .map_err(|e| format!("flush failed: {e}"))?;
     Ok(total_ciphertext)
 }
 
@@ -152,7 +159,8 @@ pub(super) fn encrypt_aead_file_to_path(
 fn parse_aead_header_from_file(path: &Path, password: &str) -> Result<AeadHeader, String> {
     let mut file = File::open(path).map_err(|e| format!("open failed: {e}"))?;
     let mut header = [0u8; AEAD_HEADER_LEN];
-    file.read_exact(&mut header).map_err(|e| format!("read failed: {e}"))?;
+    file.read_exact(&mut header)
+        .map_err(|e| format!("read failed: {e}"))?;
     parse_aead_header(&header, password)
 }
 
@@ -198,7 +206,13 @@ fn parse_aead_header(header: &[u8], password: &str) -> Result<AeadHeader, String
     let mut key = [0u8; 32];
     pbkdf2_hmac_sha256(password.as_bytes(), salt, iterations, &mut key);
 
-    Ok(AeadHeader { magic, header, key, nonce_prefix, chunk_size })
+    Ok(AeadHeader {
+        magic,
+        header,
+        key,
+        nonce_prefix,
+        chunk_size,
+    })
 }
 
 /// Decrypt a DBENC002/003 file to a fresh temporary file.
@@ -317,7 +331,9 @@ where
         chunk_index += 1;
     }
 
-    writer.flush().map_err(|e| format!("temp flush failed: {e}"))?;
+    writer
+        .flush()
+        .map_err(|e| format!("temp flush failed: {e}"))?;
     Ok(DecryptedTempFile {
         temp_path: temp_path.to_path_buf(),
         plaintext_sha256: hex_digest(&sha.finalize()),

@@ -6,8 +6,9 @@ use std::thread;
 
 use super::App;
 use crate::media::MediaRoot;
-use crate::worker::{EncryptionSettings, WorkerEvent, discover_drives_worker,
-                   verify_drives_worker};
+use crate::worker::{
+    EncryptionSettings, WorkerEvent, discover_drives_worker, verify_drives_worker,
+};
 
 use super::keys::resolve_private_key_path;
 
@@ -110,8 +111,7 @@ impl App {
         }
 
         // Resolve which credential we have available.
-        let resolved_key = resolve_private_key_path(&self.private_key_input)
-            .filter(|p| p.exists());
+        let resolved_key = resolve_private_key_path(&self.private_key_input).filter(|p| p.exists());
         let has_key = resolved_key.is_some();
 
         // When encrypted mode is active, we need either a private key or a password.
@@ -168,5 +168,4 @@ impl App {
         self.reset_event_channel();
         self.log_line("Verification aborted.");
     }
-
 }

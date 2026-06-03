@@ -24,23 +24,29 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use aes_gcm::aead::KeyInit as AeadKeyInit;
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::AeadInPlace;
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use aes_gcm::aead::KeyInit as AeadKeyInit;
 use sha2::{Digest, Sha256};
 
 use super::{
-    AEAD_CHUNK_SIZE, AEAD_HEADER_LEN, AEAD_SALT_LEN, AEAD_XCHACHA_NONCE_LEN, AeadHeader,
-    ARGON2_M_COST, ARGON2_P_COST, ARGON2_T_COST, DbEncFormat, DecryptedTempFile,
-    MAGIC_DBENC004, cleanup_temp_file, ensure_parent_dir, fill_random, hex_digest,
-    make_aead_aad, make_aead_nonce, make_temp_path, write_aead_chunk,
+    AEAD_CHUNK_SIZE, AEAD_HEADER_LEN, AEAD_SALT_LEN, AEAD_XCHACHA_NONCE_LEN, ARGON2_M_COST,
+    ARGON2_P_COST, ARGON2_T_COST, AeadHeader, DbEncFormat, DecryptedTempFile, MAGIC_DBENC004,
+    cleanup_temp_file, ensure_parent_dir, fill_random, hex_digest, make_aead_aad, make_aead_nonce,
+    make_temp_path, write_aead_chunk,
 };
 
 /// Derive a 32-byte key from `password` and `salt` using Argon2id.
-fn build_argon2id_key(password: &str, salt: &[u8], m: u32, t: u32, p: u32) -> Result<[u8; 32], String> {
-    let params = Params::new(m, t, p, Some(32))
-        .map_err(|e| format!("argon2 params invalid: {e}"))?;
+fn build_argon2id_key(
+    password: &str,
+    salt: &[u8],
+    m: u32,
+    t: u32,
+    p: u32,
+) -> Result<[u8; 32], String> {
+    let params =
+        Params::new(m, t, p, Some(32)).map_err(|e| format!("argon2 params invalid: {e}"))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key = [0u8; 32];
     argon2
@@ -84,7 +90,8 @@ fn build_argon2id_header(password: &str) -> Result<(AeadHeader, [u8; 32]), Strin
 fn parse_argon2id_header_from_file(path: &Path, password: &str) -> Result<AeadHeader, String> {
     let mut file = File::open(path).map_err(|e| format!("open failed: {e}"))?;
     let mut header = [0u8; AEAD_HEADER_LEN];
-    file.read_exact(&mut header).map_err(|e| format!("read failed: {e}"))?;
+    file.read_exact(&mut header)
+        .map_err(|e| format!("read failed: {e}"))?;
 
     if &header[..8] != MAGIC_DBENC004 {
         return Err("missing DBENC004 header".to_string());
@@ -94,10 +101,26 @@ fn parse_argon2id_header_from_file(path: &Path, password: &str) -> Result<AeadHe
     let mut nonce_prefix = [0u8; AEAD_XCHACHA_NONCE_LEN];
     nonce_prefix.copy_from_slice(&header[24..48]);
 
-    let m = u32::from_le_bytes(header[48..52].try_into().map_err(|_| "invalid m_cost".to_string())?);
-    let t = u32::from_le_bytes(header[52..56].try_into().map_err(|_| "invalid t_cost".to_string())?);
-    let p = u32::from_le_bytes(header[56..60].try_into().map_err(|_| "invalid p_cost".to_string())?);
-    let chunk_size = u32::from_le_bytes(header[60..64].try_into().map_err(|_| "invalid chunk size".to_string())?);
+    let m = u32::from_le_bytes(
+        header[48..52]
+            .try_into()
+            .map_err(|_| "invalid m_cost".to_string())?,
+    );
+    let t = u32::from_le_bytes(
+        header[52..56]
+            .try_into()
+            .map_err(|_| "invalid t_cost".to_string())?,
+    );
+    let p = u32::from_le_bytes(
+        header[56..60]
+            .try_into()
+            .map_err(|_| "invalid p_cost".to_string())?,
+    );
+    let chunk_size = u32::from_le_bytes(
+        header[60..64]
+            .try_into()
+            .map_err(|_| "invalid chunk size".to_string())?,
+    );
 
     let key = build_argon2id_key(password, salt, m, t, p)?;
 
@@ -137,7 +160,9 @@ pub(super) fn encrypt_argon2id_file_to_path(
     let mut buf = vec![0u8; parsed.chunk_size as usize];
 
     loop {
-        let read = source.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+        let read = source
+            .read(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
         if read == 0 {
             break;
         }
@@ -161,7 +186,9 @@ pub(super) fn encrypt_argon2id_file_to_path(
         chunk_index += 1;
     }
 
-    destination.flush().map_err(|e| format!("flush failed: {e}"))?;
+    destination
+        .flush()
+        .map_err(|e| format!("flush failed: {e}"))?;
     Ok(total_ciphertext)
 }
 
@@ -240,7 +267,9 @@ where
             progress(ct_buf.len() as u64);
             chunk_index += 1;
         }
-        writer.flush().map_err(|e| format!("temp flush failed: {e}"))
+        writer
+            .flush()
+            .map_err(|e| format!("temp flush failed: {e}"))
     })();
 
     if let Err(e) = result {

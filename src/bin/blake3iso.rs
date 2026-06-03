@@ -17,13 +17,16 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 
 use isob3_tools::blake3iso_core::{CheckOutcome, check_iso, implant_iso, info_iso, remove_iso};
-use isob3_tools::keyutil;
 use isob3_tools::isomd5::{
     IsoMd5CheckOutcome, has_isomd5sum_implant, info_isomd5sum, verify_isomd5sum,
 };
+use isob3_tools::keyutil;
 
 #[derive(Parser)]
-#[command(name = "blake3iso", about = "ISOB3 ISO integrity tool and ML-KEM-768 key manager.")]
+#[command(
+    name = "blake3iso",
+    about = "ISOB3 ISO integrity tool and ML-KEM-768 key manager."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -96,9 +99,7 @@ fn run_check(file: &Path) -> (i32, String) {
                 Ok(IsoMd5CheckOutcome::Valid { digest_hex }) => {
                     (0, format!("ISOMD5 valid ({digest_hex})"))
                 }
-                Ok(IsoMd5CheckOutcome::Invalid(detail)) => {
-                    (1, format!("ISOMD5 invalid\n{detail}"))
-                }
+                Ok(IsoMd5CheckOutcome::Invalid(detail)) => (1, format!("ISOMD5 invalid\n{detail}")),
                 Ok(IsoMd5CheckOutcome::ToolMissing) => {
                     (0, "ISOMD5 present (tool missing)".to_string())
                 }
