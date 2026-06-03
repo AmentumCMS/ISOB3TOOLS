@@ -25,12 +25,12 @@ Available on Linux and Windows.
 discdecrypt [OPTIONS]
 ```
 
-| Argument | Type | Required | Description |
-|---|---|---|---|
-| `--input <PATH>` | path | no | Root of the disc or extracted directory (default: current directory `.`) |
-| `--output <PATH>` | path | no | Output directory for decrypted files (prompted if omitted) |
-| `--password <PASSWORD>` | string | no | Decryption password for DBENC001–003 files (prompted if omitted and `--private-key` not given) |
-| `--private-key <FILE>` | path | no | ML-KEM-768 decapsulation key (`.dk`) for DBENC005 (post-quantum) files |
+| Argument                | Type   | Required | Description                                                                                    |
+|-------------------------|--------|----------|------------------------------------------------------------------------------------------------|
+| `--input <PATH>`        | path   | no       | Root of the disc or extracted directory (default: current directory `.`)                       |
+| `--output <PATH>`       | path   | no       | Output directory for decrypted files (prompted if omitted)                                     |
+| `--password <PASSWORD>` | string | no       | Decryption password for DBENC001–003 files (prompted if omitted and `--private-key` not given) |
+| `--private-key <FILE>`  | path   | no       | ML-KEM-768 decapsulation key (`.dk`) for DBENC005 (post-quantum) files                         |
 
 Provide `--password` for password-encrypted discs or `--private-key` for PQE-encrypted discs. If neither is supplied and no `--private-key` is given, the tool prompts for a password interactively.
 
@@ -85,7 +85,7 @@ The output directory must be outside the input tree. If the output path is insid
 
 ## Exit Codes
 
-| Code | Meaning |
-|---|---|
-| `0` | Success |
-| `2` | Operational error (bad path, decryption failure, wrong password, etc.) |
+| Code | Meaning                                                                |
+|------|------------------------------------------------------------------------|
+| `0`  | Success                                                                |
+| `2`  | Operational error (bad path, decryption failure, wrong password, etc.) |

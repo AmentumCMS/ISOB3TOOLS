@@ -32,21 +32,27 @@ For each selected drive, the verifier searches for and runs:
 
 Toggle **Encrypted files** in the toolbar to enable encrypted-payload verification.
 
-When enabled, a password button appears. Click it to enter the shared DBENC password. The verifier will decrypt files in memory during SHA-256 manifest checks rather than comparing ciphertext.
+When enabled, two credential controls appear:
+
+- **Password button** — set the shared password for DBENC001–DBENC004 symmetric files.
+- **Private key row** — load a `.dk` file (ML-KEM-768 decapsulation key, 64 bytes) for DBENC005 post-quantum files. Defaults automatically to `~/.isob3/default.dk` if that file exists. Click the row to browse for a different key.
+
+The verifier uses per-file format detection: DBENC005 files use the loaded private key; all other DBENC files use the password. Both can be set simultaneously for discs that contain a mix.
 
 ## Controls
 
-| Control | Description |
-|---|---|
-| **Scan Drives** | Discover removable and optical drives |
-| **Verify Selected** | Start verification across checked drives |
-| **Abort** | Stop verification in progress (with confirmation) |
-| **Max workers** | Number of parallel verification workers (1–16) |
-| **Encrypted files** | Enable encrypted-payload mode |
-| **Password button** | Set or change the decryption password |
-| **Select All / Clear** | Select or deselect all discovered drives |
-| Drive name link | Open the per-drive detail window |
-| **About** | Show credits and feature summary |
+| Control                | Description                                            |
+|------------------------|--------------------------------------------------------|
+| **Scan Drives**        | Discover removable and optical drives                  |
+| **Verify Selected**    | Start verification across checked drives               |
+| **Abort**              | Stop verification in progress (with confirmation)      |
+| **Max workers**        | Number of parallel verification workers (1–16)         |
+| **Encrypted files**    | Enable encrypted-payload mode                          |
+| **Password button**    | Set or change the DBENC001–004 decryption password     |
+| **Private key row**    | Load a `.dk` decapsulation key for DBENC005 (PQE) files |
+| **Select All / Clear** | Select or deselect all discovered drives               |
+| Drive name link        | Open the per-drive detail window                       |
+| **About**              | Show credits and feature summary                       |
 
 ## Results Table
 

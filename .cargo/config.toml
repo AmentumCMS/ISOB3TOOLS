@@ -1,0 +1,37 @@
+# Cargo local build configuration.
+#
+# Purpose: speed up incremental development builds on developer workstations.
+# These settings are NOT used by CI (CI builds release binaries and doesn't
+# pick up profile.dev tweaks for --release).
+
+[profile.dev]
+# Emit line-number debug info only (default is "full" which includes variable
+# names, type info, etc.).  Cuts link time significantly on Windows MSVC and
+# Linux without losing the ability to get stack traces in tests.
+debug = 1
+
+[profile.dev.build-override]
+# Build scripts and proc-macros compile faster with fewer codegen units.
+opt-level = 0
+codegen-units = 256
+
+# ── Windows (MSVC) ─────────────────────────────────────────────────────────────
+# Use the bundled LLVM linker (lld-link) instead of MSVC link.exe.
+# This requires no extra installs — lld ships with the Rust toolchain.
+# Typical speedup: 2-4× on large crates with many symbols.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"
+
+# ── Linux ──────────────────────────────────────────────────────────────────────
+# Use mold if available (install: `sudo apt install mold`), otherwise fall back
+# to lld (`sudo apt install lld`).  Both are far faster than the default GNU ld.
+#
+# To activate mold:   uncomment the lines below and comment out the lld block.
+# To activate lld:    uncomment the lines below.
+#
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+#
+# [target.x86_64-unknown-linux-gnu]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]

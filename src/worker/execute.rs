@@ -534,3 +534,69 @@ pub(super) fn estimate_verification_source_bytes(path: &Path) -> u64 {
 pub(super) fn is_abort_error(err: &str) -> bool {
     err.contains("operation aborted")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_abort_error ────────────────────────────────────────────────────────
+
+    #[test]
+    fn abort_error_matches_sentinel() {
+        assert!(is_abort_error("operation aborted"));
+        assert!(is_abort_error("read failed: operation aborted"));
+        assert!(is_abort_error("wrapped: operation aborted by user"));
+    }
+
+    #[test]
+    fn abort_error_does_not_match_other_errors() {
+        assert!(!is_abort_error(""));
+        assert!(!is_abort_error("some other error"));
+        assert!(!is_abort_error("OPERATION ABORTED")); // case-sensitive
+    }
+
+    // ── looks_like_iso_bytes ──────────────────────────────────────────────────
+
+    #[test]
+    fn iso_bytes_too_short_returns_false() {
+        assert!(!looks_like_iso_bytes(&[]));
+        assert!(!looks_like_iso_bytes(&[0u8; 16 * 2048]));   // one byte short
+        assert!(!looks_like_iso_bytes(&[0u8; 16 * 2048 + 6]));
+    }
+
+    #[test]
+    fn iso_bytes_valid_pvd_returns_true() {
+        let pvd_offset = 16 * 2048;
+        let mut data = vec![0u8; pvd_offset + 7];
+        data[pvd_offset] = 1;
+        data[pvd_offset + 1..pvd_offset + 6].copy_from_slice(b"CD001");
+        data[pvd_offset + 6] = 1;
+        assert!(looks_like_iso_bytes(&data));
+    }
+
+    #[test]
+    fn iso_bytes_wrong_magic_returns_false() {
+        let pvd_offset = 16 * 2048;
+        let mut data = vec![0u8; pvd_offset + 7];
+        data[pvd_offset] = 1;
+        data[pvd_offset + 1..pvd_offset + 6].copy_from_slice(b"XXXXX");
+        data[pvd_offset + 6] = 1;
+        assert!(!looks_like_iso_bytes(&data));
+    }
+
+    // ── looks_like_iso_target ─────────────────────────────────────────────────
+
+    #[test]
+    fn iso_extension_matches() {
+        assert!(looks_like_iso_target(Path::new("disc.iso")));
+        assert!(looks_like_iso_target(Path::new("disc.ISO")));
+        assert!(looks_like_iso_target(Path::new("path/to/image.Iso")));
+    }
+
+    #[test]
+    fn non_iso_extension_does_not_match() {
+        assert!(!looks_like_iso_target(Path::new("archive.zip")));
+        assert!(!looks_like_iso_target(Path::new("file.bin")));
+        assert!(!looks_like_iso_target(Path::new("noextension")));
+    }
+}

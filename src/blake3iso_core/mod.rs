@@ -15,7 +15,7 @@
 //! | 16     | 32   | BLAKE3-256 digest                  |
 //!
 //! The digest is computed with the application-use area itself **zeroed** so
-//! the stored value does not influence the hash.  This normalisation is applied
+//! the stored value does not influence the hash.  This normalization is applied
 //! consistently during implant, check, and removal.
 //!
 //! ## Module layout
@@ -323,4 +323,105 @@ pub fn info_iso(path: &Path) -> Result<String, String> {
         "ISOB3 metadata found\nVersion: {}\nAlgorithm: {}\nDigest len: {}\nFlags: {}\nDigest: {}\nOffset: 0x{:X}",
         version, algo_name, digest_len, flags, hash::hex(&digest), APPDATA_OFFSET
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── validate_pvd ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn pvd_valid_header_passes() {
+        let mut pvd = [0u8; 7];
+        pvd[0] = 1;
+        pvd[1..6].copy_from_slice(b"CD001");
+        pvd[6] = 1;
+        assert!(validate_pvd(&pvd).is_ok());
+    }
+
+    #[test]
+    fn pvd_wrong_type_fails() {
+        let mut pvd = [0u8; 7];
+        pvd[0] = 2; // must be 1
+        pvd[1..6].copy_from_slice(b"CD001");
+        pvd[6] = 1;
+        assert!(validate_pvd(&pvd).is_err());
+    }
+
+    #[test]
+    fn pvd_wrong_magic_fails() {
+        let mut pvd = [0u8; 7];
+        pvd[0] = 1;
+        pvd[1..6].copy_from_slice(b"XXXXX");
+        pvd[6] = 1;
+        assert!(validate_pvd(&pvd).is_err());
+    }
+
+    #[test]
+    fn pvd_wrong_version_fails() {
+        let mut pvd = [0u8; 7];
+        pvd[0] = 1;
+        pvd[1..6].copy_from_slice(b"CD001");
+        pvd[6] = 2; // must be 1
+        assert!(validate_pvd(&pvd).is_err());
+    }
+
+    // ── read_metadata_from_appdata ────────────────────────────────────────────
+
+    #[test]
+    fn appdata_blank_returns_none() {
+        let buf = [APPDATA_FILL; APPDATA_SIZE];
+        assert!(matches!(read_metadata_from_appdata(&buf), Ok(None)));
+    }
+
+    #[test]
+    fn appdata_wrong_magic_returns_none() {
+        let mut buf = [APPDATA_FILL; APPDATA_SIZE];
+        buf[0..8].copy_from_slice(b"NOTMAGIC");
+        assert!(matches!(read_metadata_from_appdata(&buf), Ok(None)));
+    }
+
+    #[test]
+    fn appdata_wrong_version_returns_none() {
+        let mut buf = [APPDATA_FILL; APPDATA_SIZE];
+        buf[0..8].copy_from_slice(b"ISOB3APP");
+        buf[8] = 0xFF; // unrecognised version
+        buf[9] = 1;
+        buf[10] = 32; buf[11] = 0;
+        assert!(matches!(read_metadata_from_appdata(&buf), Ok(None)));
+    }
+
+    #[test]
+    fn appdata_wrong_algo_returns_none() {
+        let mut buf = [APPDATA_FILL; APPDATA_SIZE];
+        buf[0..8].copy_from_slice(b"ISOB3APP");
+        buf[8] = 1;
+        buf[9] = 0xFF; // unknown algorithm
+        buf[10] = 32; buf[11] = 0;
+        assert!(matches!(read_metadata_from_appdata(&buf), Ok(None)));
+    }
+
+    #[test]
+    fn appdata_wrong_digest_len_returns_none() {
+        let mut buf = [APPDATA_FILL; APPDATA_SIZE];
+        buf[0..8].copy_from_slice(b"ISOB3APP");
+        buf[8] = 1;
+        buf[9] = 1;
+        buf[10] = 16; buf[11] = 0; // 16 instead of required 32
+        assert!(matches!(read_metadata_from_appdata(&buf), Ok(None)));
+    }
+
+    #[test]
+    fn appdata_valid_record_returns_digest() {
+        let mut buf = [APPDATA_FILL; APPDATA_SIZE];
+        buf[0..8].copy_from_slice(b"ISOB3APP");
+        buf[8] = 1;   // VERSION
+        buf[9] = 1;   // ALGO_BLAKE3_256
+        buf[10] = 32; buf[11] = 0; // DIGEST_LEN LE
+        buf[12..16].copy_from_slice(&0u32.to_le_bytes()); // FLAGS
+        let digest = [0xABu8; 32];
+        buf[16..48].copy_from_slice(&digest);
+        assert_eq!(read_metadata_from_appdata(&buf).unwrap(), Some(digest));
+    }
 }

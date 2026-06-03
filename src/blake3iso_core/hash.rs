@@ -2,7 +2,7 @@
 //!
 //! The ISOB3 digest is computed over the entire image with the application-use
 //! area **zeroed** (filled with `0x20` / space) so that the stored digest does
-//! not influence its own value.  This normalisation is applied identically
+//! not influence its own value.  This normalization is applied identically
 //! during implant, check, and removal.
 //!
 //! Two code paths are provided:
@@ -22,7 +22,7 @@ use super::io::{read_with_retries};
 
 // ── Streaming (on-disk) ────────────────────────────────────────────────────────
 
-/// Compute the normalised BLAKE3 digest of an ISO image file.
+/// Compute the normalized BLAKE3 digest of an ISO image file.
 ///
 /// Equivalent to [`compute_blake3_normalized_with_cancel`] with a no-op abort check.
 pub(super) fn compute_blake3_normalized<F>(
@@ -36,7 +36,7 @@ where
     compute_blake3_normalized_with_cancel(path, chunk_size, progress, || false)
 }
 
-/// Compute the normalised BLAKE3 digest of an ISO image file with progress and
+/// Compute the normalized BLAKE3 digest of an ISO image file with progress and
 /// cancellation support.
 ///
 /// The application-use area (`APPDATA_OFFSET .. APPDATA_OFFSET + APPDATA_SIZE`)
@@ -97,7 +97,7 @@ where
 
 // ── In-memory ─────────────────────────────────────────────────────────────────
 
-/// Compute the normalised BLAKE3 digest over an in-memory ISO byte slice.
+/// Compute the normalized BLAKE3 digest over an in-memory ISO byte slice.
 ///
 /// Clones the slice, blanks the application-use area in the copy, then hashes
 /// the whole thing.  Only suitable for files small enough to hold in memory.
@@ -122,4 +122,60 @@ pub(super) fn hex(bytes: &[u8]) -> String {
         out.push(HEX[(b & 0x0f) as usize] as char);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::blake3iso_core::{APPDATA_FILL, APPDATA_OFFSET, APPDATA_SIZE};
+
+    #[test]
+    fn hex_encodes_known_bytes() {
+        assert_eq!(hex(&[0x00, 0x0f, 0xff, 0xab, 0x10]), "000fffab10");
+    }
+
+    #[test]
+    fn hex_empty_input_is_empty_string() {
+        assert_eq!(hex(&[]), "");
+    }
+
+    #[test]
+    fn normalized_bytes_zeroes_appdata_region() {
+        // Build a buffer large enough to contain the full APPDATA region.
+        let len = APPDATA_OFFSET as usize + APPDATA_SIZE + 64;
+        let mut data = vec![0xABu8; len];
+        // Fill appdata with a sentinel that would change the hash if not blanked.
+        data[APPDATA_OFFSET as usize..APPDATA_OFFSET as usize + APPDATA_SIZE].fill(0xFF);
+
+        let result = compute_blake3_normalized_bytes(&data);
+
+        // Build the expected hash independently: blank the appdata then hash.
+        let mut expected_data = data.clone();
+        expected_data[APPDATA_OFFSET as usize..APPDATA_OFFSET as usize + APPDATA_SIZE]
+            .fill(APPDATA_FILL);
+        let expected = *blake3::hash(&expected_data).as_bytes();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn normalized_bytes_is_deterministic() {
+        let data = vec![0x42u8; APPDATA_OFFSET as usize + APPDATA_SIZE + 32];
+        assert_eq!(
+            compute_blake3_normalized_bytes(&data),
+            compute_blake3_normalized_bytes(&data)
+        );
+    }
+
+    #[test]
+    fn normalized_bytes_differs_from_raw_hash_when_appdata_nonblank() {
+        let len = APPDATA_OFFSET as usize + APPDATA_SIZE + 32;
+        let mut data = vec![0u8; len];
+        // Non-blank appdata.
+        data[APPDATA_OFFSET as usize..APPDATA_OFFSET as usize + APPDATA_SIZE].fill(0xCC);
+
+        let normalised = compute_blake3_normalized_bytes(&data);
+        let raw = *blake3::hash(&data).as_bytes();
+        assert_ne!(normalised, raw, "hash should differ when appdata is non-blank");
+    }
 }

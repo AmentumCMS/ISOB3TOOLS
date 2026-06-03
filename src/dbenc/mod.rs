@@ -386,7 +386,7 @@ pub(super) fn make_aead_aad(magic: &[u8; 8], chunk_index: u64, plaintext_len: u3
 
 /// Write one framed AEAD chunk: `plaintext_len_le[4] | ciphertext | tag`.
 pub(super) fn write_aead_chunk(
-    destination: &mut std::fs::File,
+    destination: &mut File,
     plaintext_len: u32,
     ciphertext: &[u8],
     tag: &[u8],
@@ -467,26 +467,101 @@ pub(super) fn make_temp_path(prefix: &str, source_path: Option<&Path>) -> PathBu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
-    #[test]
-    fn decrypted_temp_file_preserves_source_extension() {
-        let root = std::env::temp_dir().join(format!(
-            "dbenc-test-{}-{}",
+    fn unique_dir(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "dbenc-{tag}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("create temp root");
+        ))
+    }
+
+    /// Encrypt `plaintext` to a temp file with `format` + `password`, decrypt it, and
+    /// verify the round-trip produces the original bytes.
+    fn assert_roundtrip(plaintext: &[u8], password: &str, format: DbEncFormat) {
+        let root = unique_dir(format.cli_name());
+        fs::create_dir_all(&root).expect("create temp dir");
+
+        let src = root.join("input.bin");
+        let enc = root.join("input.bin.enc");
+        fs::write(&src, plaintext).expect("write plaintext");
+
+        encrypt_file_to_path(&src, &enc, password, format).expect("encrypt");
+
+        // The magic header must match the expected format.
+        let mut magic_buf = [0u8; 8];
+        {
+            use std::io::Read;
+            fs::File::open(&enc).unwrap().read_exact(&mut magic_buf).unwrap();
+        }
+        let expected_magic = match format {
+            DbEncFormat::DbEnc001 => b"DBENC001",
+            DbEncFormat::DbEnc002 => b"DBENC002",
+            DbEncFormat::DbEnc003 => b"DBENC003",
+            DbEncFormat::DbEnc004 => b"DBENC004",
+            DbEncFormat::DbEnc005 => b"DBENC005",
+        };
+        assert_eq!(&magic_buf, expected_magic, "magic mismatch for {:?}", format);
+
+        let decrypted = decrypt_file(&enc, password).expect("decrypt");
+        assert_eq!(decrypted.plaintext, plaintext, "round-trip mismatch for {:?}", format);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn round_trip_dbenc001_legacy_cbc() {
+        assert_roundtrip(b"hello dbenc001 legacy world!", "pass-001", DbEncFormat::DbEnc001);
+    }
+
+    #[test]
+    fn round_trip_dbenc002_aes_gcm() {
+        assert_roundtrip(b"hello dbenc002 aes-gcm world!", "pass-002", DbEncFormat::DbEnc002);
+    }
+
+    #[test]
+    fn round_trip_dbenc003_xchacha20() {
+        assert_roundtrip(b"hello dbenc003 xchacha20 world!", "pass-003", DbEncFormat::DbEnc003);
+    }
+
+    #[test]
+    fn round_trip_dbenc004_argon2id() {
+        assert_roundtrip(b"hello dbenc004 argon2id world!", "pass-004", DbEncFormat::DbEnc004);
+    }
+
+    #[test]
+    fn wrong_password_fails_decryption() {
+        let root = unique_dir("wrong-pass");
+        fs::create_dir_all(&root).expect("create temp dir");
+
+        let src = root.join("data.bin");
+        let enc = root.join("data.bin.enc");
+        fs::write(&src, b"secret payload").expect("write");
+        encrypt_file_to_path(&src, &enc, "correct", DbEncFormat::DbEnc003).expect("encrypt");
+
+        assert!(
+            decrypt_file(&enc, "wrong").is_err(),
+            "decryption with wrong password should fail"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn decrypted_temp_file_preserves_source_extension() {
+        let root = unique_dir("ext");
+        fs::create_dir_all(&root).expect("create temp root");
 
         let source = root.join("payload.iso");
         let encrypted = root.join("payload.iso.enc");
-        std::fs::write(&source, b"hello world").expect("write source");
+        fs::write(&source, b"hello world").expect("write source");
 
         encrypt_file_to_path(&source, &encrypted, "secret", DbEncFormat::DbEnc003)
             .expect("encrypt source");
-        std::fs::rename(&encrypted, &source).expect("replace source with encrypted content");
+        fs::rename(&encrypted, &source).expect("replace source with encrypted content");
 
         let decrypted = decrypt_file_to_temp_with_cancel(&source, "secret", |_| {}, || false)
             .expect("decrypt source");
@@ -497,7 +572,6 @@ mod tests {
         );
 
         cleanup_temp_file(&decrypted.temp_path);
-        let _ = std::fs::remove_file(&source);
-        let _ = std::fs::remove_dir(&root);
+        let _ = fs::remove_dir_all(&root);
     }
 }

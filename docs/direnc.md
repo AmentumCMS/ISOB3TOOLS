@@ -18,25 +18,25 @@ Available on Linux and Windows.
 direnc <DIRECTORY> (--password <PW> | --public-key <FILE>) [OPTIONS]
 ```
 
-| Argument | Type | Required | Description |
-|---|---|---|---|
-| `DIRECTORY` | path | yes | Directory to process in place |
-| `--password <PW>` | string | see note | Encryption password for DBENC001–003. Mutually exclusive with `--public-key`. |
-| `--public-key <FILE>` | path | see note | ML-KEM-768 encapsulation key (`.ek`) for DBENC004 (post-quantum). Mutually exclusive with `--password`. |
-| `--format <FORMAT>` | string | no | Encryption format. Defaults to `xchacha20` (password) or `pqe-xchacha20` (public key). |
-| `--exclude <DIRS>` | string | no | Comma-separated list of subdirectory paths to skip |
+| Argument              | Type   | Required | Description                                                                                             |
+|-----------------------|--------|----------|---------------------------------------------------------------------------------------------------------|
+| `DIRECTORY`           | path   | yes      | Directory to process in place                                                                           |
+| `--password <PW>`     | string | see note | Encryption password for DBENC001–003. Mutually exclusive with `--public-key`.                           |
+| `--public-key <FILE>` | path   | see note | ML-KEM-768 encapsulation key (`.ek`) for DBENC005 (post-quantum). Mutually exclusive with `--password`. |
+| `--format <FORMAT>`   | string | no       | Encryption format. Defaults to `argon2id` (password) or `pqe-xchacha20` (public key).                   |
+| `--exclude <DIRS>`    | string | no       | Comma-separated list of subdirectory paths to skip                                                      |
 
 One of `--password` or `--public-key` is required.
 
 ### `--format`
 
-| Name | Format | Notes |
-|---|---|---|
-| `argon2id` | DBENC004 Argon2id + XChaCha20-Poly1305 | Default with `--password` |
+| Name            | Format                                   | Notes                       |
+|-----------------|------------------------------------------|-----------------------------|
+| `argon2id`      | DBENC004 Argon2id + XChaCha20-Poly1305   | Default with `--password`   |
 | `pqe-xchacha20` | DBENC005 ML-KEM-768 + XChaCha20-Poly1305 | Default with `--public-key` |
-| `xchacha20` | DBENC003 XChaCha20-Poly1305 + PBKDF2 | |
-| `aes-gcm` | DBENC002 AES-256-GCM + PBKDF2 | |
-| `legacy-cbc` | DBENC001 AES-256-CBC + HMAC-SHA256 | Compatibility only |
+| `xchacha20`     | DBENC003 XChaCha20-Poly1305 + PBKDF2     |                             |
+| `aes-gcm`       | DBENC002 AES-256-GCM + PBKDF2            |                             |
+| `legacy-cbc`    | DBENC001 AES-256-CBC + HMAC-SHA256       | Compatibility only          |
 
 ### `--exclude`
 
@@ -73,10 +73,10 @@ direnc iso-staging --password secret --format aes-gcm
 
 ## Exit Codes
 
-| Code | Meaning |
-|---|---|
-| `0` | Success |
-| `2` | Operational error |
+| Code | Meaning           |
+|------|-------------------|
+| `0`  | Success           |
+| `2`  | Operational error |
 
 ## ISO Prep Workflow
 
