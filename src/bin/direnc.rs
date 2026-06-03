@@ -1,3 +1,26 @@
+//! `direnc` — in-place directory encryptor for disc mastering.
+//!
+//! This tool walks a directory tree that has been extracted from an ISO (e.g.
+//! via `xorriso -osirrox`) and encrypts every payload file in-place using one
+//! of the DBENC formats.  It then injects the `discdecrypt` binary and helper
+//! scripts into a `decryptor/` subdirectory so that end-users can decrypt the
+//! disc after optical read-back without installing additional software.
+//!
+//! ## Typical workflow
+//!
+//! ```text
+//! 1. xorriso -osirrox on:in image.iso -extract / iso-root/
+//! 2. direnc iso-root/ [--public-key key.ek | --password secret] [--format argon2id]
+//! 3. xorriso ... -outdev encrypted.iso
+//! ```
+//!
+//! ## Credential priority
+//!
+//! 1. `--public-key <path>` — ML-KEM-768 encapsulation key (DBENC005 / PQE)
+//! 2. `--password <secret>` — symmetric password (DBENC001–004)
+//! 3. `~/.isob3/default.ek` — auto-discovered public key (no flag needed)
+//! 4. Prompted interactively if none of the above are present
+
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
@@ -18,6 +41,7 @@ use isob3_tools::sha256sum::is_sha256_manifest;
              Run xorriso yourself before (to extract) and after (to rebuild the ISO)."
 )]
 struct Cli {
+    /// Directory tree to encrypt in-place (e.g. the xorriso extraction root).
     directory: PathBuf,
     /// Password for DBENC001–004 (symmetric). Mutually exclusive with --public-key.
     /// If neither --password nor --public-key is given, looks for ~/.isob3/default.ek first.
@@ -27,12 +51,17 @@ struct Cli {
     /// Mutually exclusive with --password.
     #[arg(long, conflicts_with = "password")]
     public_key: Option<PathBuf>,
+    /// DBENC format name (e.g. `argon2id`, `xchacha20`, `pqe-xchacha20`).
+    /// Defaults to `argon2id` for passwords or `pqe-xchacha20` for public keys.
     #[arg(long)]
     format: Option<String>,
+    /// Comma-separated list of subdirectory names to skip (e.g. `extras,efi`).
     #[arg(long)]
     exclude: Option<String>,
 }
 
+/// Resolved encryption credential — either a password string or a raw ML-KEM-768
+/// encapsulation key loaded from a `.ek` file.
 enum EncKey {
     Password(String),
     PublicKey([u8; PQE_EK_LEN]),
@@ -68,6 +97,8 @@ fn main() {
     }
 }
 
+/// Return the platform-appropriate `~/.isob3` key directory, or `None` if the
+/// home directory cannot be determined from environment variables.
 fn default_key_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     let home = std::env::var("USERPROFILE").ok()?;
@@ -76,6 +107,9 @@ fn default_key_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".isob3"))
 }
 
+/// Resolve which encryption credential to use, following the priority order:
+/// explicit `--public-key`, explicit `--password`, auto-discovered `.ek`,
+/// then interactive password prompt.
 fn resolve_enc_key(password: Option<String>, public_key: Option<PathBuf>) -> Result<EncKey, String> {
     if let Some(pk_path) = public_key {
         return Ok(EncKey::PublicKey(load_public_key(&pk_path)?));
@@ -97,6 +131,7 @@ fn resolve_enc_key(password: Option<String>, public_key: Option<PathBuf>) -> Res
     }
 }
 
+/// Print `label: ` to stdout and read one line from stdin, returning it trimmed.
 fn prompt(label: &str) -> io::Result<String> {
     print!("{label}: ");
     io::stdout().flush()?;
@@ -105,6 +140,7 @@ fn prompt(label: &str) -> io::Result<String> {
     Ok(value.trim().to_string())
 }
 
+/// Read a ML-KEM-768 encapsulation key from `path`, returning the raw 1184-byte array.
 fn load_public_key(path: &PathBuf) -> Result<[u8; PQE_EK_LEN], String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
     bytes
@@ -113,6 +149,9 @@ fn load_public_key(path: &PathBuf) -> Result<[u8; PQE_EK_LEN], String> {
         .map_err(|_| format!("{} is not a valid ML-KEM-768 encapsulation key (expected {PQE_EK_LEN} bytes)", path.display()))
 }
 
+/// Encrypt every payload file in `dir` in-place and inject the decryptor bundle.
+///
+/// Returns a human-readable summary on success, or an error description on failure.
 fn run(
     dir: &Path,
     enc_key: &EncKey,
@@ -135,6 +174,8 @@ fn run(
     ))
 }
 
+/// Parse an optional format name, defaulting to DBENC005 for public-key credentials
+/// and DBENC004 (Argon2id) for passwords.
 fn resolve_format(name: Option<&str>, key: &EncKey) -> Result<DbEncFormat, String> {
     match name {
         Some(n) => {
@@ -147,6 +188,7 @@ fn resolve_format(name: Option<&str>, key: &EncKey) -> Result<DbEncFormat, Strin
     }
 }
 
+/// Split the `--exclude` comma-separated list into normalized relative paths.
 fn parse_exclude_dirs(raw: Option<&str>) -> Vec<PathBuf> {
     raw.unwrap_or("")
         .split(',')
@@ -156,6 +198,8 @@ fn parse_exclude_dirs(raw: Option<&str>) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Strip leading root components (`.`, `/`, drive letters) from an exclude path
+/// so it can be compared against `path.strip_prefix(root)` relative paths.
 fn normalize_exclude_path(raw: &str) -> PathBuf {
     let mut out = PathBuf::new();
     for component in Path::new(raw).components() {
@@ -168,6 +212,7 @@ fn normalize_exclude_path(raw: &str) -> PathBuf {
     out
 }
 
+/// Format the exclude list as a human-readable comma-separated string, or `"none"`.
 fn format_excludes(excludes: &[PathBuf]) -> String {
     if excludes.is_empty() {
         "none".to_string()
@@ -180,6 +225,11 @@ fn format_excludes(excludes: &[PathBuf]) -> String {
     }
 }
 
+/// Walk `root` and encrypt every non-excluded, non-manifest file in-place.
+///
+/// Each file is encrypted to a sibling temp path first; on success it replaces
+/// the original.  This avoids leaving a partially-encrypted file if the process
+/// is interrupted.  Returns the number of files encrypted.
 fn encrypt_tree_in_place(
     root: &Path,
     enc_key: &EncKey,
@@ -220,6 +270,12 @@ fn encrypt_tree_in_place(
     Ok(count)
 }
 
+/// Copy the `discdecrypt` (Linux) and `discdecrypt.exe` (Windows) binaries into
+/// `root/decryptor/`, along with a `README.txt` and a `decrypt.sh` convenience
+/// wrapper, so end-users can decrypt without installing additional tools.
+///
+/// The decryptor binaries are located relative to the currently-running `direnc`
+/// executable, which is how the CI build places them.
 fn inject_decryptor(root: &Path) -> Result<(), String> {
     let current_exe = std::env::current_exe().map_err(|e| format!("current_exe failed: {e}"))?;
     let exe_dir = current_exe
@@ -290,6 +346,10 @@ fn inject_decryptor(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Find the Linux `discdecrypt` binary relative to the running executable.
+///
+/// Checks a fixed `discdecrypt` sibling first, then falls back to scanning the
+/// directory for any non-`.exe` file whose name starts with `discdecrypt`.
 fn resolve_linux_decryptor(current_exe: &Path, exe_dir: &Path) -> Result<PathBuf, String> {
     let mut candidates = vec![exe_dir.join("discdecrypt")];
     if let Some(name) = current_exe.file_name().and_then(|n| n.to_str()) {
@@ -311,6 +371,11 @@ fn resolve_linux_decryptor(current_exe: &Path, exe_dir: &Path) -> Result<PathBuf
     })
 }
 
+/// Find the Windows `discdecrypt.exe` binary relative to the running executable.
+///
+/// Checks a fixed `discdecrypt.exe` sibling first, then scans for any `.exe`
+/// whose name starts with `discdecrypt` and contains `windows` (cross-compiled
+/// artifact naming convention).
 fn resolve_windows_decryptor(exe_dir: &Path) -> Result<PathBuf, String> {
     let direct = exe_dir.join("discdecrypt.exe");
     if direct.is_file() {
@@ -328,6 +393,7 @@ fn resolve_windows_decryptor(exe_dir: &Path) -> Result<PathBuf, String> {
     })
 }
 
+/// Return the first regular file in `dir` whose name satisfies `pred`, or `None`.
 fn find_in_dir(dir: &Path, pred: impl Fn(&str) -> bool) -> Option<PathBuf> {
     fs::read_dir(dir)
         .ok()?
@@ -342,6 +408,12 @@ fn find_in_dir(dir: &Path, pred: impl Fn(&str) -> bool) -> Option<PathBuf> {
         })
 }
 
+/// Return `true` if a file should be skipped during encryption.
+///
+/// Skipped files:
+/// - SHA-256 manifests (so checksums stay verifiable after decryption)
+/// - Anything under `decryptor/` (the injected tools themselves)
+/// - Any path whose first component matches an entry in `exclude_dirs`
 fn should_skip(relative: &Path, full_path: &Path, exclude_dirs: &[PathBuf]) -> bool {
     if is_sha256_manifest(full_path) {
         return true;
@@ -361,6 +433,10 @@ fn should_skip(relative: &Path, full_path: &Path, exclude_dirs: &[PathBuf]) -> b
         .any(|ex| !ex.as_os_str().is_empty() && relative.starts_with(ex))
 }
 
+/// Build a unique temporary file path in the same directory as `path`.
+///
+/// Using a sibling temp ensures the rename-to-replace is atomic on most
+/// file systems (same volume as the target).
 fn sibling_temp_path(path: &Path) -> PathBuf {
     let name = path
         .file_name()

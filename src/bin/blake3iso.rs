@@ -1,3 +1,17 @@
+//! `blake3iso` — CLI for ISOB3 metadata and ML-KEM-768 keypair management.
+//!
+//! ## Subcommands
+//!
+//! | Subcommand | Description                                                       |
+//! |------------|-------------------------------------------------------------------|
+//! | `implant`  | Write ISOB3 (BLAKE3) integrity metadata into an ISO file          |
+//! | `check`    | Verify ISOB3 metadata; falls back to ISOMD5 if absent            |
+//! | `remove`   | Strip ISOB3 metadata from an ISO file                             |
+//! | `info`     | Print embedded metadata without verifying                         |
+//! | `keygen`   | Generate an ML-KEM-768 keypair for DBENC005 (PQE) encryption     |
+//!
+//! Exit codes: `0` = success/valid, `1` = check failed, `2` = error.
+
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
@@ -9,7 +23,7 @@ use isob3_tools::isomd5::{
 };
 
 #[derive(Parser)]
-/// CLI for ISOB3 ISO integrity operations.
+#[command(name = "blake3iso", about = "ISOB3 ISO integrity tool and ML-KEM-768 key manager.")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -17,29 +31,49 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Write ISOB3 (BLAKE3) integrity metadata into an ISO file.
+    ///
+    /// The metadata is embedded in the ISO9660 application-use area of the
+    /// Primary Volume Descriptor so it survives raw optical duplication.
     Implant {
+        /// Path to the ISO file to implant.
         file: PathBuf,
+        /// Overwrite existing ISOB3 metadata if already present.
         #[arg(long)]
         force: bool,
     },
+    /// Verify the ISOB3 metadata embedded in an ISO file.
+    ///
+    /// Falls back to ISOMD5 verification if no ISOB3 metadata is found.
+    /// Exit code 0 = valid, 1 = invalid, 2 = error.
     Check {
+        /// Path to the ISO file to check.
         file: PathBuf,
     },
+    /// Strip ISOB3 metadata from an ISO file, leaving it unmodified otherwise.
     Remove {
+        /// Path to the ISO file to clear.
         file: PathBuf,
     },
+    /// Print embedded ISOB3 or ISOMD5 metadata without re-verifying the content.
     Info {
+        /// Path to the ISO file to inspect.
         file: PathBuf,
     },
     /// Generate an ML-KEM-768 keypair for DBENC005 (PQE) encryption.
-    /// Writes <output>.ek (encapsulation/public key) and <output>.dk (decapsulation/private key).
-    /// Defaults to ~/.isob3/default if --output is omitted.
+    ///
+    /// Writes `<output>.ek` (encapsulation / public key, 1184 bytes) and
+    /// `<output>.dk` (decapsulation / private key seed, 64 bytes).
+    /// Defaults to `~/.isob3/default` when `--output` is omitted.
     Keygen {
+        /// File-system path prefix for the key files (no extension).
         #[arg(long)]
         output: Option<PathBuf>,
     },
 }
 
+/// Return the default keypair prefix `~/.isob3/default`, or `None` if the
+/// home directory cannot be read from environment variables.
 fn default_key_prefix() -> Option<PathBuf> {
     #[cfg(windows)]
     let home = std::env::var("USERPROFILE").ok()?;
@@ -48,6 +82,9 @@ fn default_key_prefix() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".isob3").join("default"))
 }
 
+/// Generate an ML-KEM-768 keypair and write `<prefix>.ek` and `<prefix>.dk`.
+///
+/// Returns a human-readable summary of what was written, or an error string.
 fn run_keygen(output: Option<&PathBuf>) -> Result<String, String> {
     let prefix = match output {
         Some(p) => p.clone(),
@@ -75,6 +112,9 @@ fn run_keygen(output: Option<&PathBuf>) -> Result<String, String> {
     ))
 }
 
+/// Run integrity verification on `file`, trying ISOB3 first and ISOMD5 as fallback.
+///
+/// Returns `(exit_code, message)` where exit code 0 = valid, 1 = invalid, 2 = error.
 fn run_check(file: &PathBuf) -> (i32, String) {
     match check_iso(file) {
         Ok(CheckOutcome::Valid { detail, .. }) => (0, detail),
@@ -99,6 +139,9 @@ fn run_check(file: &PathBuf) -> (i32, String) {
     }
 }
 
+/// Print embedded metadata from `file` without re-hashing the content.
+///
+/// Returns `(exit_code, message)` where exit code 0 = info found, 2 = error.
 fn run_info(file: &PathBuf) -> (i32, String) {
     match info_iso(file) {
         Ok(msg) if msg != "No ISOB3 metadata found." => (0, msg),
