@@ -6,6 +6,19 @@ use eframe::egui;
 
 use crate::app::{App, format::human_bytes};
 
+/// Scroll behaviour for panels: scrollbar + mouse-wheel, but NOT drag.
+///
+/// Drag-to-scroll is disabled so a ScrollArea touching a panel boundary does
+/// not swallow the drag event meant for the panel's resize handle. (Desktop
+/// users scroll with the wheel or scrollbar, so this costs nothing.)
+fn no_drag_scroll() -> egui::scroll_area::ScrollSource {
+    egui::scroll_area::ScrollSource {
+        scroll_bar: true,
+        drag: false,
+        mouse_wheel: true,
+    }
+}
+
 // ── Drive-selection panel ──────────────────────────────────────────────────────
 
 /// Render the drive-selection grid (fills the remaining central area).
@@ -15,6 +28,10 @@ pub fn show_drives(app: &mut App, ui: &mut egui::Ui) {
 
     if app.drives.is_empty() {
         ui.label("Run `Scan Drives` to discover removable and optical drives.");
+        // Fill the rest of the panel so the resizable panel keeps its height
+        // instead of collapsing to this short message (which would pin its
+        // stored size to min_size — even after drives are later scanned).
+        ui.allocate_space(ui.available_size());
         return;
     }
 
@@ -59,6 +76,10 @@ pub fn show_drives(app: &mut App, ui: &mut egui::Ui) {
 
     egui::ScrollArea::vertical()
         .id_salt("drives_scroll")
+        .scroll_source(no_drag_scroll())
+        // Fill the panel's full height so the resizable panel keeps its size
+        // instead of collapsing to its content height (which pins it to min_size).
+        .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Grid::new("drive_grid")
                 .striped(true)
@@ -119,6 +140,8 @@ pub fn show_results(app: &mut App, ui: &mut egui::Ui) {
 
     egui::ScrollArea::vertical()
         .id_salt("results_scroll")
+        .scroll_source(no_drag_scroll())
+        .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Grid::new("results_grid")
                 .striped(true)
@@ -175,6 +198,8 @@ pub fn show_log(app: &mut App, ui: &mut egui::Ui) {
 
     egui::ScrollArea::vertical()
         .id_salt("log_scroll")
+        .scroll_source(no_drag_scroll())
+        .auto_shrink([false, false])
         .stick_to_bottom(app.log_autoscroll)
         .show(ui, |ui| {
             for line in &app.logs {

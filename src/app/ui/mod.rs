@@ -35,31 +35,47 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     }
 
     // ── Layout ────────────────────────────────────────────────────────────────
-    // Declaration order matters: bottom panels must be declared before any
-    // remaining-space panel so egui allocates them first.
+    // We render every panel with show_inside(ui) on the Ui that eframe hands us
+    // (eframe 0.34's `App::ui` gives us a top-level Ui; nesting panels inside it
+    // with show_inside is the supported pattern).
+    //
+    // Two requirements make the resizable panels behave (see panels.rs):
+    //   1. Each panel's content must FILL the panel's height. egui stores a
+    //      resizable panel's size from its *content* rect, so content shorter
+    //      than the panel collapses its stored size down to `min_size` — and a
+    //      drag then "snaps back" on release. The inner ScrollAreas use
+    //      `auto_shrink([false, false])` (and the empty drive list fills the
+    //      leftover space) so the panels keep their height.
+    //   2. The inner ScrollAreas must NOT sense drag, or they swallow the drag
+    //      meant for the panel's resize handle at the boundary. They pass a
+    //      `scroll_source` with drag disabled for this.
+    //
+    // Declaration order matters: bottom panels before the CentralPanel.
 
     egui::Panel::top("top_panel").show_inside(ui, |ui| {
         toolbar::show(app, ui);
     });
 
-    egui::Panel::top("drives_panel")
+    egui::Panel::top("drives_panel_v2")
         .resizable(true)
         .min_size(60.0)
-        .default_size(200.0)
+        .default_size(160.0)
         .show_inside(ui, |ui| {
             panels::show_drives(app, ui);
         });
 
-    egui::Panel::bottom("log_panel")
+    egui::Panel::bottom("log_panel_v2")
         .resizable(true)
         .min_size(60.0)
-        .default_size(180.0)
+        .default_size(280.0)
         .show_inside(ui, |ui| {
             panels::show_log(app, ui);
         });
 
-    // Results fills whatever space remains between drives and log.
-    panels::show_results(app, ui);
+    // Results fills exactly the space between drives and log.
+    egui::CentralPanel::default().show_inside(ui, |ui| {
+        panels::show_results(app, ui);
+    });
 
     // ── Floating dialogs ──────────────────────────────────────────────────────
     dialogs::show_all(app, &ctx);
