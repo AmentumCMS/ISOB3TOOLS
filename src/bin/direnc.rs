@@ -32,6 +32,7 @@ use walkdir::WalkDir;
 use isob3_tools::dbenc::{
     DbEncFormat, PQE_EK_LEN, encrypt_file_pqe, encrypt_file_to_path, parse_format_name,
 };
+use isob3_tools::keyutil;
 use isob3_tools::sha256sum::is_sha256_manifest;
 
 #[derive(Parser)]
@@ -97,16 +98,6 @@ fn main() {
     }
 }
 
-/// Return the platform-appropriate `~/.isob3` key directory, or `None` if the
-/// home directory cannot be determined from environment variables.
-fn default_key_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    let home = std::env::var("USERPROFILE").ok()?;
-    #[cfg(not(windows))]
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".isob3"))
-}
-
 /// Resolve which encryption credential to use, following the priority order:
 /// explicit `--public-key`, explicit `--password`, auto-discovered `.ek`,
 /// then interactive password prompt.
@@ -117,7 +108,7 @@ fn resolve_enc_key(password: Option<String>, public_key: Option<PathBuf>) -> Res
     if let Some(pw) = password {
         return Ok(EncKey::Password(pw));
     }
-    if let Some(default_ek) = default_key_dir().map(|d| d.join("default.ek")) {
+    if let Some(default_ek) = keyutil::default_key_dir().map(|d| d.join("default.ek")) {
         if default_ek.is_file() {
             eprintln!("Using default encapsulation key: {}", default_ek.display());
             return Ok(EncKey::PublicKey(load_public_key(&default_ek)?));

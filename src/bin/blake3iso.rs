@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use isob3_tools::blake3iso_core::{CheckOutcome, check_iso, implant_iso, info_iso, remove_iso};
-use isob3_tools::dbenc::{PQE_DK_LEN, PQE_EK_LEN, generate_pqe_keypair};
+use isob3_tools::keyutil;
 use isob3_tools::isomd5::{
     IsoMd5CheckOutcome, has_isomd5sum_implant, info_isomd5sum, verify_isomd5sum,
 };
@@ -72,44 +72,16 @@ enum Commands {
     },
 }
 
-/// Return the default keypair prefix `~/.isob3/default`, or `None` if the
-/// home directory cannot be read from environment variables.
-fn default_key_prefix() -> Option<PathBuf> {
-    #[cfg(windows)]
-    let home = std::env::var("USERPROFILE").ok()?;
-    #[cfg(not(windows))]
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".isob3").join("default"))
-}
-
 /// Generate an ML-KEM-768 keypair and write `<prefix>.ek` and `<prefix>.dk`.
 ///
 /// Returns a human-readable summary of what was written, or an error string.
 fn run_keygen(output: Option<&PathBuf>) -> Result<String, String> {
     let prefix = match output {
         Some(p) => p.clone(),
-        None => default_key_prefix()
+        None => keyutil::default_key_prefix()
             .ok_or_else(|| "cannot determine home directory; use --output".to_string())?,
     };
-    if let Some(parent) = prefix.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("create directory {} failed: {e}", parent.display()))?;
-        }
-    }
-    let (ek, dk) = generate_pqe_keypair()?;
-    let ek_path = prefix.with_extension("ek");
-    let dk_path = prefix.with_extension("dk");
-    std::fs::write(&ek_path, &ek[..PQE_EK_LEN])
-        .map_err(|e| format!("write {} failed: {e}", ek_path.display()))?;
-    std::fs::write(&dk_path, &dk[..PQE_DK_LEN])
-        .map_err(|e| format!("write {} failed: {e}", dk_path.display()))?;
-    Ok(format!(
-        "Encapsulation key (public):  {}\nDecapsulation key (private): {}\nKeep the .dk file secret.\n\
-         direnc and discdecrypt will auto-discover these keys if placed at ~/.isob3/default.{{ek,dk}}.",
-        ek_path.display(),
-        dk_path.display()
-    ))
+    keyutil::run_keygen(&prefix)
 }
 
 /// Run integrity verification on `file`, trying ISOB3 first and ISOMD5 as fallback.

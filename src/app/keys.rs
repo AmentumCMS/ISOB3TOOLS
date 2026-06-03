@@ -1,33 +1,13 @@
 //! Key-file path helpers, keypair generation, and the OS file-picker.
 //!
-//! Keypair generation writes two files:
-//!   - `{prefix}.ek`  — encapsulation key (public, 1184 bytes); share with disc producers
-//!   - `{prefix}.dk`  — decapsulation key (private, 64-byte seed); keep secret
+//! Path helpers and keypair generation are thin wrappers around [`crate::keyutil`].
+//! This module adds the GUI-specific `browse_dk_file` helper.
 
 use std::path::PathBuf;
 
-use crate::dbenc::{PQE_DK_LEN, PQE_EK_LEN, generate_pqe_keypair};
+pub use crate::keyutil::{default_dk_path, default_key_dir, default_key_prefix};
 
-// ── Default path helpers ───────────────────────────────────────────────────────
-
-/// Platform-appropriate `~/.isob3` directory.
-pub fn default_key_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    let home = std::env::var("USERPROFILE").ok()?;
-    #[cfg(not(windows))]
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".isob3"))
-}
-
-/// Default keypair file prefix: `~/.isob3/default`
-pub fn default_key_prefix() -> Option<PathBuf> {
-    Some(default_key_dir()?.join("default"))
-}
-
-/// Default private-key path: `~/.isob3/default.dk`
-pub fn default_dk_path() -> Option<PathBuf> {
-    Some(default_key_prefix()?.with_extension("dk"))
-}
+// ── Re-exported helpers ────────────────────────────────────────────────────────
 
 /// Resolve a private-key path from user input.
 ///
@@ -35,52 +15,21 @@ pub fn default_dk_path() -> Option<PathBuf> {
 /// Otherwise fall back to [`default_dk_path`].
 /// Returns `None` only if neither produces a path.
 pub fn resolve_private_key_path(input: &str) -> Option<PathBuf> {
-    if !input.trim().is_empty() {
-        return Some(PathBuf::from(input.trim()));
-    }
-    default_dk_path()
+    crate::keyutil::resolve_private_key_path(input)
 }
 
 // ── Keypair generation ─────────────────────────────────────────────────────────
 
 /// Generate an ML-KEM-768 keypair and write the two key files.
 ///
-/// `prefix` is a file-system path without an extension.  The `.ek` and `.dk`
-/// files are written alongside each other.  Parent directories are created
-/// automatically.
-///
+/// `prefix` is a file-system path without an extension.
 /// Returns a human-readable success message or an error description.
 pub fn run_keygen(prefix: &str) -> Result<String, String> {
     let prefix = prefix.trim();
     if prefix.is_empty() {
         return Err("Output prefix must not be empty.".to_string());
     }
-
-    let ek_path = PathBuf::from(format!("{prefix}.ek"));
-    let dk_path = PathBuf::from(format!("{prefix}.dk"));
-
-    // Ensure the parent directory exists.
-    if let Some(parent) = ek_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("create directory failed: {e}"))?;
-        }
-    }
-
-    let (ek_bytes, dk_bytes) = generate_pqe_keypair()?;
-
-    std::fs::write(&ek_path, &ek_bytes)
-        .map_err(|e| format!("write {}: {e}", ek_path.display()))?;
-    std::fs::write(&dk_path, &dk_bytes)
-        .map_err(|e| format!("write {}: {e}", dk_path.display()))?;
-
-    Ok(format!(
-        "✔ Keypair written.\n  Public  (.ek): {}  [{} bytes]\n  Private (.dk): {}  [{} bytes]",
-        ek_path.display(),
-        PQE_EK_LEN,
-        dk_path.display(),
-        PQE_DK_LEN,
-    ))
+    crate::keyutil::run_keygen(std::path::Path::new(prefix))
 }
 
 // ── Native file picker ─────────────────────────────────────────────────────────
