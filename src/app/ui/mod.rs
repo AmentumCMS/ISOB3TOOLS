@@ -41,38 +41,32 @@ pub fn render(app: &mut App, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
     // 2. Inside the remaining area: bottom panels (log, results) are declared
     //    first so egui allocates them before the central drive-list panel.
 
+    // Toolbar — fixed height at the top.
     egui::Panel::top("top_panel").show_inside(ui, |ui| {
         toolbar::show(app, ui);
     });
 
+    // Drive list — sits just below the toolbar; starts at ~5-row height, resizable.
+    egui::Panel::top("drives_panel")
+        .resizable(true)
+        .min_size(60.0)
+        .default_size(200.0)
+        .show_inside(ui, |ui| {
+            panels::show_drives(app, ui);
+        });
+
+    // Log — anchored to the very bottom, resizable upward.
+    egui::Panel::bottom("log_panel")
+        .resizable(true)
+        .min_size(60.0)
+        .default_size(180.0)
+        .show_inside(ui, |ui| {
+            panels::show_log(app, ui);
+        });
+
+    // Results — fills exactly the space between drives and log; no gap possible.
     egui::CentralPanel::default().show_inside(ui, |ui| {
-        // Log panel — anchored to the very bottom, resizable upward.
-        egui::Panel::bottom("log_panel")
-            .resizable(true)
-            .min_size(60.0)
-            .default_size(180.0)
-            .show_inside(ui, |ui| {
-                panels::show_log(app, ui);
-            });
-
-        // Results panel — sits above the log, resizable.
-        egui::Panel::bottom("results_panel")
-            .resizable(true)
-            .min_size(60.0)
-            .default_size(220.0)
-            .show_inside(ui, |ui| {
-                panels::show_results(app, ui);
-            });
-
-        // Drive-selection panel — capped so it doesn't consume the whole window
-        // when the drive list is short (max ~5 rows visible, then scrolls).
-        egui::Panel::top("drives_panel")
-            .resizable(true)
-            .min_size(60.0)
-            .default_size(200.0)
-            .show_inside(ui, |ui| {
-                panels::show_drives(app, ui);
-            });
+        panels::show_results(app, ui);
     });
 
     // ── Floating dialogs ──────────────────────────────────────────────────────
