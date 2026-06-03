@@ -1,0 +1,54 @@
+name: CodeQL
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  schedule:
+    # Weekly full scan (Mondays 06:17 UTC) to catch advisories in code that
+    # hasn't changed recently.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same branch/PR so stale runs don't waste
+# runner minutes.  workflow_dispatch runs are never canceled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (rust)
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload code scanning results.
+      security-events: write
+      # Only needed for workflows in private repositories.
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Rust is extracted with build-mode "none" — CodeQL builds the
+          # database from source without compiling, so no toolchain setup or
+          # cargo build step is required.
+          - language: rust
+            build-mode: none
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@d77b13a0df3134d64a457ea9003f600b09fa1c8a # v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@d77b13a0df3134d64a457ea9003f600b09fa1c8a # v3
+        with:
+          category: "/language:${{ matrix.language }}"
