@@ -29,6 +29,8 @@ runs:
   steps:
     - name: Fetch blake3iso binary
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
 
@@ -48,12 +50,28 @@ runs:
 
         ver="${{ inputs.version }}"
         asset="ISOB3TOOLS-linux-x86_64-gnu.tar.gz"
+
+        # GitHub's `releases/latest` alias excludes prereleases, and ISOB3TOOLS
+        # publishes its `build-*` releases as prereleases. So for `latest`,
+        # resolve the newest release (prereleases included) via the API rather
+        # than relying on the `releases/latest/download` redirect.
         if [ "$ver" = "latest" ]; then
-          url="https://github.com/$repo/releases/latest/download/$asset"
-        else
-          url="https://github.com/$repo/releases/download/$ver/$asset"
+          auth=()
+          if [ -n "${GH_TOKEN:-}" ]; then
+            auth=(-H "Authorization: Bearer $GH_TOKEN")
+          fi
+          ver="$(curl -fsSL "${auth[@]}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$repo/releases?per_page=1" \
+            | jq -r '.[0].tag_name // empty')"
+          if [ -z "$ver" ]; then
+            echo "::error::Could not resolve the latest ISOB3TOOLS release from $repo."
+            exit 1
+          fi
+          echo "Resolved latest release: $ver"
         fi
 
+        url="https://github.com/$repo/releases/download/$ver/$asset"
         echo "Downloading blake3iso from $url"
         tmp="$(mktemp -d)"
         curl -L --fail --retry 3 -o "$tmp/blake3iso.tar.gz" "$url"

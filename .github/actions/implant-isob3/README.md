@@ -45,5 +45,6 @@ Pin `@main` to a tag or commit SHA once you cut a version (e.g. `@v1`).
 
 - **Linux x86_64 only.** The action downloads the `linux-x86_64-gnu` release
   asset and fails fast on other runners.
-- `version: latest` follows the newest published release. Pin a specific release
-  tag (e.g. `version: build-42`) for reproducibility.
+- `version: latest` resolves the newest release **including prereleases**
+  (ISOB3TOOLS publishes its `build-*` releases as prereleases). Pin a specific
+  release tag (e.g. `version: build-69`) for reproducibility.
