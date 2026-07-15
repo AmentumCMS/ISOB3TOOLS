@@ -17,6 +17,7 @@ use std::path::Path;
 
 use blake3::Hasher;
 
+use super::io;
 use super::io::read_with_retries;
 use super::{APPDATA_FILL, APPDATA_OFFSET, APPDATA_SIZE};
 
@@ -43,6 +44,13 @@ where
 /// is replaced with [`APPDATA_FILL`] bytes in the hash input so the stored
 /// digest is self-consistent.
 ///
+/// For regular files the entire file is hashed.  For Windows raw optical
+/// devices exactly the PVD-declared volume size is hashed instead, because the
+/// physical track may be padded beyond the image (DVD ECC blocks) and
+/// `cdrom.sys` reports EOF 150 sectors *before* the end of the last track —
+/// any sectors past that `ReadFile` limit are fetched via SCSI passthrough
+/// ([`io::read_sectors_scsi`]).
+///
 /// `progress` is called with the number of bytes fed to the hasher each
 /// iteration.  `should_abort` is polled before every chunk; returning `true`
 /// causes an early `Err("operation aborted")`.
@@ -56,6 +64,14 @@ where
     F: FnMut(u64),
     G: FnMut() -> bool,
 {
+    // On a raw device the hash range is the PVD-declared image size, not the
+    // (padded, partially hidden) track EOF.
+    let device_total: Option<u64> = if io::is_windows_raw_device(path) {
+        Some(super::estimate_iso_bytes(path)?)
+    } else {
+        None
+    };
+
     let mut file = File::open(path).map_err(|e| format!("open failed: {e}"))?;
     let mut hasher = Hasher::new();
     let mut buf = vec![0u8; chunk_size];
@@ -69,8 +85,22 @@ where
             return Err("operation aborted".to_string());
         }
 
-        let n = read_with_retries(path, &mut file, &mut buf)?;
+        let want = match device_total {
+            Some(total) if offset >= total => break,
+            Some(total) => chunk_size.min((total - offset) as usize),
+            None => chunk_size,
+        };
+
+        let n = read_with_retries(path, &mut file, &mut buf[..want])?;
         if n == 0 {
+            match device_total {
+                // cdrom.sys hit its artificial EOF before the declared image
+                // end; read the hidden tail sectors via SCSI READ(10).
+                Some(total) if offset < total => {
+                    hash_device_tail_scsi(path, offset, total, &mut hasher, &mut progress)?;
+                }
+                _ => {}
+            }
             break;
         }
 
@@ -93,6 +123,40 @@ where
     }
 
     Ok(*hasher.finalize().as_bytes())
+}
+
+/// Hash device sectors `[offset, total)` that lie beyond the `cdrom.sys`
+/// `ReadFile` EOF, fetching them with SCSI passthrough reads.
+///
+/// The application-use area never overlaps this range (it sits ~33 KiB into
+/// the image, which is always reachable via `ReadFile` when the PVD itself
+/// was), so no blanking is needed here.
+fn hash_device_tail_scsi<F>(
+    path: &Path,
+    offset: u64,
+    total: u64,
+    hasher: &mut Hasher,
+    progress: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(u64),
+{
+    use super::ISO_SECTOR_SIZE;
+
+    if offset % ISO_SECTOR_SIZE != 0 || total % ISO_SECTOR_SIZE != 0 {
+        return Err(format!(
+            "device EOF at unaligned offset {offset} (image size {total})"
+        ));
+    }
+    let lba = u32::try_from(offset / ISO_SECTOR_SIZE)
+        .map_err(|_| "device tail LBA exceeds READ(10) range".to_string())?;
+    let tail_len = (total - offset) as usize;
+
+    let mut tail = vec![0u8; tail_len];
+    io::read_sectors_scsi(path, lba, &mut tail)?;
+    hasher.update(&tail);
+    progress(tail_len as u64);
+    Ok(())
 }
 
 // ── In-memory ─────────────────────────────────────────────────────────────────
