@@ -1,0 +1,97 @@
+name: 'Implant ISOB3'
+description: 'Implant BLAKE3 (ISOB3) integrity metadata into an ISO9660 image and verify it.'
+author: 'AmentumCMS'
+
+branding:
+  icon: 'disc'
+  color: 'purple'
+
+inputs:
+  iso_path:
+    description: 'Path to the ISO file to implant, relative to the workspace.'
+    required: true
+  force:
+    description: 'Overwrite existing application-use metadata (passes --force).'
+    required: false
+    default: 'false'
+  version:
+    description: 'ISOB3TOOLS release tag to pull the blake3iso binary from, or "latest".'
+    required: false
+    default: 'latest'
+
+outputs:
+  digest:
+    description: 'The BLAKE3-256 digest implanted into the ISO (hex).'
+    value: ${{ steps.implant.outputs.digest }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Fetch blake3iso binary
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [ "${RUNNER_OS:-}" != "Linux" ]; then
+          echo "::error::implant-isob3 currently supports Linux runners only (got '${RUNNER_OS:-unknown}')."
+          exit 1
+        fi
+
+        # The action is consumed as `AmentumCMS/ISOB3TOOLS/...@ref`, so
+        # github.action_repository resolves to the repo that publishes the
+        # release binaries. Fall back to the canonical repo if it is empty
+        # (e.g. when the action is run from a local checkout).
+        repo="${{ github.action_repository }}"
+        if [ -z "$repo" ]; then
+          repo="AmentumCMS/ISOB3TOOLS"
+        fi
+
+        ver="${{ inputs.version }}"
+        asset="ISOB3TOOLS-linux-x86_64-gnu.tar.gz"
+        if [ "$ver" = "latest" ]; then
+          url="https://github.com/$repo/releases/latest/download/$asset"
+        else
+          url="https://github.com/$repo/releases/download/$ver/$asset"
+        fi
+
+        echo "Downloading blake3iso from $url"
+        tmp="$(mktemp -d)"
+        curl -L --fail --retry 3 -o "$tmp/blake3iso.tar.gz" "$url"
+        tar -xzf "$tmp/blake3iso.tar.gz" -C "$tmp"
+        install -m 0755 "$tmp/blake3iso-linux-x86_64-gnu" "$tmp/blake3iso"
+
+        # Expose blake3iso on PATH for later steps.
+        echo "$tmp" >> "$GITHUB_PATH"
+
+    - name: Implant and verify ISOB3
+      id: implant
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        iso="${{ inputs.iso_path }}"
+        if [ ! -f "$iso" ]; then
+          echo "::error::ISO not found at '$iso'."
+          exit 1
+        fi
+
+        force_flag=""
+        if [ "${{ inputs.force }}" = "true" ]; then
+          force_flag="--force"
+        fi
+
+        blake3iso implant $force_flag "$iso"
+        blake3iso check "$iso"
+        info="$(blake3iso info "$iso")"
+        echo "$info"
+
+        digest="$(printf '%s\n' "$info" | awk -F': ' '/^Digest:/ { print $2 }')"
+        echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "## Implant ISOB3"
+          echo "Implanted and verified \`$iso\`"
+          echo '```'
+          printf '%s\n' "$info"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"

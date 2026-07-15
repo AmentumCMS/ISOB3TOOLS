@@ -1,0 +1,118 @@
+name: Implant ISOB3
+
+# On-demand action to implant BLAKE3 (ISOB3) integrity metadata into an ISO.
+# Builds blake3iso from the current commit, downloads the target ISO, runs
+# `blake3iso implant`, then verifies the result with `check` and `info` and
+# uploads the implanted ISO as an artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      iso_url:
+        description: "Download URL for the ISO to implant"
+        required: true
+        type: string
+      force:
+        description: "Overwrite existing application-use metadata (--force)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  implant:
+    name: Implant ISOB3 into ISO
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache Cargo registry and build output
+        uses: Swatinem/rust-cache@v2 # v2
+        with:
+          key: implant-isob3
+
+      - name: Build blake3iso
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --bin blake3iso
+          mkdir -p testbin
+          cp target/release/blake3iso testbin/blake3iso
+          chmod +x testbin/blake3iso
+
+      - name: Download target ISO
+        run: |
+          set -euo pipefail
+          mkdir -p out/input
+          (
+            cd out/input
+            curl -L --fail --remote-name --remote-header-name "${{ inputs.iso_url }}"
+          )
+
+          input_path="$(find out/input -maxdepth 1 -type f | sort | head -n 1)"
+          if [ -z "$input_path" ]; then
+            echo "No ISO file was downloaded."
+            exit 2
+          fi
+
+          iso_name="$(basename "$input_path")"
+          if [[ "$iso_name" == *.[iI][sS][oO] ]]; then
+            output_name="${iso_name%.[iI][sS][oO]}.isob3.iso"
+          else
+            output_name="${iso_name}.isob3.iso"
+          fi
+
+          cp "$input_path" "out/$output_name"
+          echo "ISOB3_TARGET=out/$output_name" >> "$GITHUB_ENV"
+          ls -lh "out/$output_name"
+
+      - name: Implant ISOB3 metadata
+        run: |
+          set -euo pipefail
+          force_flag=""
+          if [ "${{ inputs.force }}" = "true" ]; then
+            force_flag="--force"
+          fi
+          testbin/blake3iso implant $force_flag "$ISOB3_TARGET" | tee out/isob3-implant.txt
+
+      - name: Verify implanted ISOB3 metadata
+        run: |
+          set -euo pipefail
+          testbin/blake3iso check "$ISOB3_TARGET" | tee out/isob3-check.txt
+          testbin/blake3iso info  "$ISOB3_TARGET" | tee out/isob3-info.txt
+
+      - name: Implant → job summary
+        if: always()
+        run: |
+          {
+            echo "## Implant ISOB3"
+            if [ -f out/isob3-info.txt ]; then
+              echo "✅ Implanted and verified \`$ISOB3_TARGET\`"
+              echo '```'
+              cat out/isob3-info.txt
+              echo '```'
+            else
+              echo "❌ Implant did not complete — see step logs."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload implanted ISO
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: isob3-implanted-iso
+          path: |
+            ${{ env.ISOB3_TARGET }}
+            out/isob3-implant.txt
+            out/isob3-check.txt
+            out/isob3-info.txt
+          retention-days: 7
