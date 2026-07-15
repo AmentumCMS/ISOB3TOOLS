@@ -678,26 +678,17 @@ jobs:
           name: built-binaries-windows
           path: scan-targets\windows
 
-      - name: Update Defender signatures
+      - name: Update Defender signatures (best effort)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          # Native exit codes must not auto-throw; we interpret them ourselves.
+          $PSNativeCommandUseErrorActionPreference = $false
 
-          # Update-MpSignature talks to the Defender service over RPC and fails
-          # with "The remote procedure call failed" when that service is stopped
-          # or still starting on hosted runners. Make sure it is running first.
-          try {
-            $svc = Get-Service -Name WinDefend -ErrorAction Stop
-            if ($svc.Status -ne 'Running') {
-              Start-Service -Name WinDefend -ErrorAction SilentlyContinue
-              $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
-            }
-          } catch {
-            Write-Host "WinDefend service not ready: $($_.Exception.Message)"
-          }
-
-          # Prefer the active platform's MpCmdRun.exe as a fallback update path
-          # that does not use the flaky RPC call.
+          # Resolve the active platform's MpCmdRun.exe. It is a native tool that
+          # keeps working when the Defender WMI/CIM provider will not load on a
+          # hosted runner -- the intermittent "Provider load failure" that breaks
+          # Update-MpSignature, Get-MpComputerStatus and Start-MpScan alike.
           $platform = Get-ChildItem 'C:\ProgramData\Microsoft\Windows Defender\Platform' -Directory -ErrorAction SilentlyContinue |
             Sort-Object Name -Descending | Select-Object -First 1
           if ($platform) {
@@ -705,76 +696,100 @@ jobs:
           } else {
             $mpcmd = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
           }
+          if (-not (Test-Path $mpcmd)) {
+            throw "MpCmdRun.exe not found; cannot scan on this runner."
+          }
+          "MPCMDRUN=$mpcmd" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-          $maxAttempts = 5
+          # Best effort: try the cmdlet, then MpCmdRun, with a couple of retries.
+          # A failed update is NOT fatal -- the EICAR self-test in the scan step
+          # is what proves the scanner actually detects malware.
           $updated = $false
-          for ($i = 1; $i -le $maxAttempts -and -not $updated; $i++) {
-            Write-Host "Signature update attempt $i of $maxAttempts"
+          for ($i = 1; $i -le 3 -and -not $updated; $i++) {
             try {
               Update-MpSignature -ErrorAction Stop
               $updated = $true
               Write-Host "Update-MpSignature succeeded."
             } catch {
               Write-Host "Update-MpSignature failed: $($_.Exception.Message)"
-              if (Test-Path $mpcmd) {
-                & $mpcmd -SignatureUpdate | Out-Host
-                if ($LASTEXITCODE -eq 0) {
-                  $updated = $true
-                  Write-Host "MpCmdRun signature update succeeded."
-                } else {
-                  Write-Host "MpCmdRun exited with code $LASTEXITCODE."
-                }
-              }
-              if (-not $updated) {
-                if ($i -eq $maxAttempts) {
-                  throw "Defender signature update failed after $maxAttempts attempts."
-                }
+              & $mpcmd -SignatureUpdate | Out-Host
+              if ($LASTEXITCODE -eq 0) {
+                $updated = $true
+                Write-Host "MpCmdRun signature update succeeded."
+              } else {
+                Write-Host "MpCmdRun signature update exited $LASTEXITCODE."
                 Start-Sleep -Seconds (10 * $i)
               }
             }
           }
-
-          # Fail the gate if signatures still are not present so the scan never
-          # runs blind.
-          $status = Get-MpComputerStatus
-          Write-Host "AV signature version:    $($status.AntivirusSignatureVersion)"
-          Write-Host "Signatures last updated: $($status.AntivirusSignatureLastUpdated)"
-          if (-not $status.AntivirusSignatureVersion) {
-            throw "No antivirus signatures present after update; refusing to scan blind."
+          if (-not $updated) {
+            Write-Host "::warning::Signature update did not complete; relying on on-box definitions (self-test still enforced)."
           }
 
-      - name: Run Microsoft Defender scan
+      - name: Scan artifacts with Microsoft Defender
         id: defender
+        shell: pwsh
         run: |
-          $scanPath = "${{ github.workspace }}\scan-targets"
-          Start-MpScan -ScanPath $scanPath -ScanType CustomScan
-          $threats = Get-MpThreatDetection
-          if ($threats) {
-            $threats | Format-List | Out-String | Set-Content defender-threats.txt
-            Write-Output "infected_count=$($threats.Count)" >> $env:GITHUB_OUTPUT
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $mpcmd = $env:MPCMDRUN
+
+          # --- Self-test: the scanner MUST detect a known-malicious EICAR file,
+          # otherwise a "clean" result on real artifacts cannot be trusted (the
+          # engine/signatures may be non-functional on this VM). The EICAR string
+          # is assembled from fragments so this workflow file is not itself
+          # flagged by scanners.
+          $eicar = 'X5O!P%@AP[4\PZX54(P^)7CC)7}' + '$' + 'EICAR-STANDARD-ANTIVIRUS-TEST-FILE!' + '$H+H*'
+          $selfDir = Join-Path $env:RUNNER_TEMP 'av-selftest'
+          New-Item -ItemType Directory -Force -Path $selfDir | Out-Null
+          $eicarFile = Join-Path $selfDir 'eicar.com'
+          try { [IO.File]::WriteAllText($eicarFile, $eicar) } catch { Write-Host "EICAR write intercepted: $($_.Exception.Message)" }
+          Start-Sleep -Seconds 2
+          & $mpcmd -Scan -ScanType 3 -File $eicarFile | Out-Host
+          $selfCode = $LASTEXITCODE
+          $eicarGone = -not (Test-Path $eicarFile)
+          if ($selfCode -eq 2 -or $eicarGone) {
+            Write-Host "Self-test passed: EICAR detected (exit=$selfCode removed=$eicarGone)."
           } else {
-            Write-Output "infected_count=0" >> $env:GITHUB_OUTPUT
+            throw "Defender self-test failed to detect EICAR (exit=$selfCode). Refusing to certify a clean scan on this runner."
+          }
+
+          # --- Real scan of the downloaded build artifacts.
+          $scanPath = Join-Path $env:GITHUB_WORKSPACE 'scan-targets'
+          & $mpcmd -Scan -ScanType 3 -File $scanPath | Tee-Object -FilePath defender-scan.txt | Out-Host
+          $code = $LASTEXITCODE
+          if ($code -eq 0) {
+            Write-Host "No threats found."
+            "result=clean" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } elseif ($code -eq 2) {
+            Write-Host "Threats detected in scan-targets."
+            "result=infected" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            throw "Defender scan errored (MpCmdRun exit $code)."
           }
 
       - name: Defender → job summary
         if: always()
         shell: pwsh
         run: |
-          $count = "${{ steps.defender.outputs.infected_count }}"
+          $result = "${{ steps.defender.outputs.result }}"
           $summary = @()
           $summary += "## 🛡️ Microsoft Defender Scan"
-          if ($count -eq "0" -or $count -eq "") {
+          if ($result -eq "clean") {
             $summary += "✅ No threats detected."
+          } elseif ($result -eq "infected") {
+            $summary += "❌ **Threats detected.**"
+            $summary += '```'
+            $summary += (Get-Content defender-scan.txt -ErrorAction SilentlyContinue)
+            $summary += '```'
           } else {
-            $summary += "❌ **$count threat(s) detected.**"
-            $summary += '```'
-            $summary += Get-Content defender-threats.txt -ErrorAction SilentlyContinue
-            $summary += '```'
+            $summary += "⚠️ Scan did not complete — see step logs."
           }
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
       - name: Fail if threats found
-        if: steps.defender.outputs.infected_count != '0' && steps.defender.outputs.infected_count != ''
+        if: steps.defender.outputs.result == 'infected'
+        shell: pwsh
         run: exit 1
 
   virus-scan:
