@@ -679,7 +679,69 @@ jobs:
           path: scan-targets\windows
 
       - name: Update Defender signatures
-        run: Update-MpSignature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Update-MpSignature talks to the Defender service over RPC and fails
+          # with "The remote procedure call failed" when that service is stopped
+          # or still starting on hosted runners. Make sure it is running first.
+          try {
+            $svc = Get-Service -Name WinDefend -ErrorAction Stop
+            if ($svc.Status -ne 'Running') {
+              Start-Service -Name WinDefend -ErrorAction SilentlyContinue
+              $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+            }
+          } catch {
+            Write-Host "WinDefend service not ready: $($_.Exception.Message)"
+          }
+
+          # Prefer the active platform's MpCmdRun.exe as a fallback update path
+          # that does not use the flaky RPC call.
+          $platform = Get-ChildItem 'C:\ProgramData\Microsoft\Windows Defender\Platform' -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if ($platform) {
+            $mpcmd = Join-Path $platform.FullName 'MpCmdRun.exe'
+          } else {
+            $mpcmd = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+          }
+
+          $maxAttempts = 5
+          $updated = $false
+          for ($i = 1; $i -le $maxAttempts -and -not $updated; $i++) {
+            Write-Host "Signature update attempt $i of $maxAttempts"
+            try {
+              Update-MpSignature -ErrorAction Stop
+              $updated = $true
+              Write-Host "Update-MpSignature succeeded."
+            } catch {
+              Write-Host "Update-MpSignature failed: $($_.Exception.Message)"
+              if (Test-Path $mpcmd) {
+                & $mpcmd -SignatureUpdate | Out-Host
+                if ($LASTEXITCODE -eq 0) {
+                  $updated = $true
+                  Write-Host "MpCmdRun signature update succeeded."
+                } else {
+                  Write-Host "MpCmdRun exited with code $LASTEXITCODE."
+                }
+              }
+              if (-not $updated) {
+                if ($i -eq $maxAttempts) {
+                  throw "Defender signature update failed after $maxAttempts attempts."
+                }
+                Start-Sleep -Seconds (10 * $i)
+              }
+            }
+          }
+
+          # Fail the gate if signatures still are not present so the scan never
+          # runs blind.
+          $status = Get-MpComputerStatus
+          Write-Host "AV signature version:    $($status.AntivirusSignatureVersion)"
+          Write-Host "Signatures last updated: $($status.AntivirusSignatureLastUpdated)"
+          if (-not $status.AntivirusSignatureVersion) {
+            throw "No antivirus signatures present after update; refusing to scan blind."
+          }
 
       - name: Run Microsoft Defender scan
         id: defender
