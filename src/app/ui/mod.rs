@@ -35,9 +35,9 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     }
 
     // ── Layout ────────────────────────────────────────────────────────────────
-    // We render every panel with show_inside(ui) on the Ui that eframe hands us
-    // (eframe 0.34's `App::ui` gives us a top-level Ui; nesting panels inside it
-    // with show_inside is the supported pattern).
+    // We render every panel with show(ui) on the Ui that eframe hands us
+    // (eframe's `App::ui` gives us a top-level Ui; nesting panels inside it
+    // with show(ui) is the supported pattern).
     //
     // Two requirements make the resizable panels behave (see panels.rs):
     //   1. Each panel's content must FILL the panel's height. egui stores a
@@ -52,7 +52,7 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     //
     // Declaration order matters: bottom panels before the CentralPanel.
 
-    egui::Panel::top("top_panel").show_inside(ui, |ui| {
+    egui::Panel::top("top_panel").show(ui, |ui| {
         toolbar::show(app, ui);
     });
 
@@ -60,7 +60,7 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
         .resizable(true)
         .min_size(60.0)
         .default_size(160.0)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             panels::show_drives(app, ui);
         });
 
@@ -68,12 +68,12 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
         .resizable(true)
         .min_size(60.0)
         .default_size(280.0)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             panels::show_log(app, ui);
         });
 
     // Results fills exactly the space between drives and log.
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         panels::show_results(app, ui);
     });
 
