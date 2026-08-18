@@ -14,7 +14,7 @@ use crate::app::{App, format::human_bytes};
 fn no_drag_scroll() -> egui::scroll_area::ScrollSource {
     egui::scroll_area::ScrollSource {
         scroll_bar: true,
-        drag: false,
+        drag: egui::scroll_area::DragScroll::Never,
         mouse_wheel: true,
     }
 }

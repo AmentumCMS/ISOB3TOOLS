@@ -216,7 +216,7 @@ impl eframe::App for DiscDecryptApp {
             self.status = result.unwrap_or_else(|err| format!("ERROR: {err}"));
         }
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("Disc Decryptor");
             ui.label(
                 "Decrypt DBENC files from an extracted or mounted disc into an output folder.",
