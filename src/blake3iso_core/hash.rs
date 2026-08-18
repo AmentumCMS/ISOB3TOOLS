@@ -143,7 +143,7 @@ where
 {
     use super::ISO_SECTOR_SIZE;
 
-    if offset % ISO_SECTOR_SIZE != 0 || total % ISO_SECTOR_SIZE != 0 {
+    if !offset.is_multiple_of(ISO_SECTOR_SIZE) || !total.is_multiple_of(ISO_SECTOR_SIZE) {
         return Err(format!(
             "device EOF at unaligned offset {offset} (image size {total})"
         ));

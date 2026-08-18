@@ -227,7 +227,7 @@ pub(super) fn read_sectors_scsi(path: &Path, lba: u32, out: &mut [u8]) -> Result
         cdb: [u8; 16],
     }
 
-    if out.len() % ISO_SECTOR_SIZE as usize != 0 {
+    if !out.len().is_multiple_of(ISO_SECTOR_SIZE as usize) {
         return Err("SCSI read buffer must be sector-aligned".to_string());
     }
 
