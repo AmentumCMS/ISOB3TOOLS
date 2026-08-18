@@ -1,0 +1,23 @@
+# cargo-audit (RustSec) configuration.
+#
+# Ignored advisories must be justified here and revisited whenever the
+# dependency tree changes. Only *unfixable* advisories belong in this list.
+
+[advisories]
+ignore = [
+    # quick-xml quadratic-parsing and namespace-allocation DoS advisories.
+    #
+    # Reached only on Linux desktop targets, transitively through the windowing
+    # and accessibility stack that eframe/egui pulls in:
+    #   * quick-xml 0.38.x  <- zbus_xml <- atspi <- accesskit_unix   (AT-SPI)
+    #   * quick-xml 0.39.x  <- wayland-scanner <- winit / smithay    (Wayland)
+    # Both parents (zbus_xml 5.x requires ^0.38, wayland-scanner 0.31 requires
+    # ^0.39) pin quick-xml below the fixed 0.41, and the latest eframe (0.36)
+    # still depends on those crates, so there is no version bump that resolves
+    # this. The affected code parses AT-SPI/Wayland protocol XML on Linux only;
+    # it is not reachable on the primary Windows target and is not exposed to
+    # untrusted input in this tool. Revisit when winit/accesskit move to
+    # quick-xml >= 0.41.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

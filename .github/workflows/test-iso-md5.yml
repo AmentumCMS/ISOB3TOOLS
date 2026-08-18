@@ -31,28 +31,28 @@ jobs:
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
         with:
           path: ~/.cargo/bin/cargo-audit
-          key: cargo-audit-0.21.0-${{ runner.os }}
+          key: cargo-audit-0.22.2-${{ runner.os }}
 
       - name: Install cargo-audit
         if: steps.cache_audit.outputs.cache-hit != 'true'
-        run: cargo install cargo-audit --version 0.21.0 --locked
+        run: cargo install cargo-audit --version 0.22.2 --locked
 
       - name: Run cargo-audit (RustSec advisory database)
-        id: cargo_audit
-        run: cargo audit 2>&1 | tee cargo-audit.txt; echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        # pipefail so cargo-audit's exit code (not tee's) gates the job. It exits
+        # non-zero on vulnerabilities; allowlisted advisories live in
+        # .cargo/audit.toml.
+        run: |
+          set -o pipefail
+          cargo audit 2>&1 | tee cargo-audit.txt
 
       - name: cargo-audit → job summary
         if: always()
         run: |
           {
             echo "## cargo-audit (RustSec)"
-            if grep -q "Vulnerabilities found" cargo-audit.txt 2>/dev/null; then
-              echo '```'
-              cat cargo-audit.txt
-              echo '```'
-            else
-              echo "✅ No advisories found."
-            fi
+            echo '```'
+            cat cargo-audit.txt 2>/dev/null || echo "(no audit output)"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run Trivy filesystem scan
